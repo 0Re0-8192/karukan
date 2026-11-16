@@ -40,4 +40,4 @@ DLL と `karukan-imserver.exe` を同じフォルダに置きます。`portable.
 
 ### 訂正からの自動学習
 
-F9/F10 で英語にした語・Shift で打った語は、次の打鍵から自動で英単語として扱います（`user_english.txt`）。確定した入力はすべて `corrections.tsv`（打ったキー・読み・最初の候補・確定した文字、ローカルのみ、消さずに残す）に記録し、PC が空いているときに `tools\curate_run.ps1` がローカルモデル（llama-server、CPU のみ、検閲なしの Gemma 4 26B-A4B）で固有名詞・よく使う語だけ選び、`user_dicts\auto.txt` と `user_english.txt` に追記します。登録は `tools\install_curate_task.ps1`（4 時間ごと、10 分操作が無いときだけ、ログは `data\curate.log`）。外部には何も送りません。
+F9/F10 で英語にした語・Shift で打った語は、次の打鍵から自動で英単語として扱います（`user_english.txt`）。確定した入力はすべて `corrections.tsv`（打ったキー・読み・最初の候補・確定した文字、ローカルのみ、消さずに残す）に記録し、PC が空いているときに `tools\curate_run.ps1` がローカルモデル（llama-server、CPU のみ、検閲なしの Gemma 4 26B-A4B）で固有名詞・よく使う語だけ選び、`user_dicts\auto.txt` と `user_english.txt` に追記します。登録は `tools\install_curate_task.ps1`（4 時間ごと、10 分操作が無いときだけ、ログは `data\curate.log`）。英単語の候補だけ、語そのもの 1 語を Wikipedia / Wiktionary に問い合わせて実在を確かめます（文脈は送らない。`-NoWeb` で無効）。ネットに無い語でも、自分で選んだ語・2 回以上打った語は登録します（1 回だけでネットにも無い語はタイプミスとして見送り）。それ以外は外部に送りません。

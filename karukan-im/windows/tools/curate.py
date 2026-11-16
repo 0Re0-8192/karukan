@@ -20,6 +20,8 @@ import json
 import os
 import re
 import sys
+import time
+import urllib.parse
 import urllib.request
 
 KEEP = 300  # records per batch
@@ -42,19 +44,20 @@ PROMPT = """あなたは日本語入力システム(IME)の辞書係です。以
 出力は次のJSONだけ(説明は不要):
 {"english": ["word", ...], "japanese": [{"reading": "よみ", "surface": "表記"}, ...]}
 
-記録:
+記録(末尾の ×n は打った回数):
 """
 
 
 def read_new(path, since):
     """Oldest-first batch of at most KEEP records newer than `since`.
 
-    Returns (rows, newest): `newest` is the timestamp the next run resumes
-    after (records the filter drops still count as read).
+    Returns (rows, newest, freq): `newest` is the timestamp the next run resumes
+    after (records the filter drops still count as read); identical records are
+    merged and `freq` says how many times each was typed.
     """
     batch = []
     if not os.path.exists(path):
-        return [], since
+        return [], since, {}
     with open(path, encoding="utf-8") as f:
         for line in f:
             parts = line.rstrip("\n").split("\t")
@@ -64,7 +67,7 @@ def read_new(path, since):
             if ts > since:
                 batch.append((ts, tuple(parts[1:])))
     batch = batch[:KEEP]
-    rows, seen = [], set()
+    rows, freq = [], {}
     for _, r in batch:
         kind, raw, reading, first, committed = r
         if SENSITIVE.search(raw) or SENSITIVE.search(committed):
@@ -72,11 +75,12 @@ def read_new(path, since):
         # an ordinary conversion taken as offered has nothing to teach the dictionary
         if kind in ("conv", "live") and not LATIN.search(committed):
             continue
-        if r in seen:
+        if r in freq:
+            freq[r] += 1
             continue
-        seen.add(r)
+        freq[r] = 1
         rows.append(r)
-    return rows, (batch[-1][0] if batch else since)
+    return rows, (batch[-1][0] if batch else since), freq
 
 
 def ask(url, prompt):
@@ -127,6 +131,72 @@ def pick(rows, out):
     return english, japanese
 
 
+WEB_MAX = 40  # lookups per run
+WEB_NEG_DAYS = 30  # a word that was not found is asked again after this long
+WEB_SITES = ("https://en.wiktionary.org", "https://en.wikipedia.org")
+
+
+def _title_exists(site, titles):
+    url = site + "/w/api.php?" + urllib.parse.urlencode(
+        {"action": "query", "format": "json", "titles": "|".join(titles)}
+    )
+    req = urllib.request.Request(url, headers={"User-Agent": "karukan-curate/1.0 (word check)"})
+    with urllib.request.urlopen(req, timeout=20) as r:
+        pages = json.load(r).get("query", {}).get("pages", {})
+    return any("missing" not in p and "invalid" not in p for p in pages.values())
+
+
+def verify_english(data, words, rows, freq):
+    """Decide which English words go into user_english.txt.
+
+    A word is kept when any of these holds: it exists as a Wiktionary or
+    Wikipedia title, the user chose it on purpose (F9/F10 or another candidate),
+    or it has been typed at least twice (counted across runs). What is dropped
+    is a word typed once that exists nowhere: most likely a typo. The web check
+    only ever adds a reason to keep; it never keeps a word the user wants out of
+    the dictionary, and a word missing from the web is not shut out for good.
+
+    Only the bare word goes out (no context, no other text). Results are cached
+    in web_cache.json; a lookup that fails (offline) keeps the word, uncached.
+    """
+    path = os.path.join(data, "web_cache.json")
+    cache = {}
+    if os.path.exists(path):
+        try:
+            cache = json.load(open(path, encoding="utf-8"))
+        except (ValueError, OSError):
+            cache = {}
+    now, kept, asked, blocked = time.time(), [], 0, False
+    for w in words:
+        mine = [r for r in rows if r[1].lower() == w or w in re.findall(r"[a-z]+", r[4].lower())]
+        n = sum(freq.get(r, 1) for r in mine)
+        deliberate = any(r[0] in ("fkey", "pick") for r in mine)
+        hit = cache.get(w)
+        if hit is None or not (hit["ok"] or now - hit["t"] < WEB_NEG_DAYS * 86400):
+            if asked >= WEB_MAX or blocked:
+                kept.append(w)  # over the budget: decide next time
+                continue
+            asked += 1
+            time.sleep(2.0)  # be gentle with the public API
+            try:
+                ok = any(_title_exists(site, [w, w.capitalize()]) for site in WEB_SITES)
+            except Exception as e:  # offline, rate limit, ...
+                print(f"web check skipped for {w}: {e}")
+                blocked = True  # stop asking for the rest of this run
+                kept.append(w)
+                continue
+            hit = {"ok": ok, "t": now, "n": (hit or {}).get("n", 0)}
+        hit["n"] = hit.get("n", 0) + n
+        cache[w] = hit
+        if hit["ok"] or deliberate or hit["n"] >= 2:
+            kept.append(w)
+        else:
+            print(f"typed once and not found on the web, not registered yet: {w}")
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(cache, f, ensure_ascii=False)
+    return kept
+
+
 def save(data, english, japanese):
     eng_path = os.path.join(data, "user_english.txt")
     have = set()
@@ -157,6 +227,7 @@ def main():
     ap.add_argument("--url", default="http://127.0.0.1:8080")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--stub", help="read the model reply from this file instead")
+    ap.add_argument("--no-web", action="store_true", help="do not check English words against Wikipedia/Wiktionary")
     ap.add_argument("--batches", type=int, default=6, help="batches of KEEP records per run")
     a = ap.parse_args()
 
@@ -171,7 +242,7 @@ def main():
 
     worked = False
     for _ in range(max(1, a.batches)):
-        rows, newest = read_new(log, since)
+        rows, newest, freq = read_new(log, since)
         if newest == since:
             break
         if not rows:  # everything in the batch was filtered out: still counts as read
@@ -182,12 +253,16 @@ def main():
                 f.write(str(since))
             continue
 
-        prompt = PROMPT + "\n".join("\t".join(r) for r in rows)
+        prompt = PROMPT + "\n".join(
+            "\t".join(r) + (f"\t×{freq[r]}" if freq[r] > 1 else "") for r in rows
+        )
         if a.dry_run and not a.stub:
             print(prompt)
             return 0
         reply = open(a.stub, encoding="utf-8").read() if a.stub else ask(a.url, prompt)
         english, japanese = pick(rows, parse(reply))
+        if english and not a.no_web and not a.stub and not a.dry_run:
+            english = verify_english(a.data, english, rows, freq)
         print(f"english: {english}")
         print(f"japanese: {japanese}")
         worked = True

@@ -2,6 +2,7 @@
 # Scheduled by install_curate_task.ps1; safe to run by hand (-Force skips the idle checks).
 param(
     [switch]$Force,
+    [switch]$NoWeb,
     [string]$Data = (Join-Path (Split-Path $PSScriptRoot -Parent) 'data'),
     [string]$Python = 'C:\Users\yuu\AppData\Local\Python\pythoncore-3.14-64\python.exe',
     [string]$Server = 'D:\Projects\.tools\llama.cpp-b11223-cuda12\extract\llama-server.exe',
@@ -73,7 +74,8 @@ try {
         }
         Log ("server up after {0:N0}s" -f ((Get-Date) - $t0).TotalSeconds)
     }
-    $out = & $Python -I -X utf8 $script --data $Data --url "http://127.0.0.1:$Port" 2>&1
+    $extra = if ($NoWeb) { @('--no-web') } else { @() }
+    $out = & $Python -I -X utf8 $script --data $Data --url "http://127.0.0.1:$Port" @extra 2>&1
     Log ("curate: " + (($out | Out-String).Trim() -replace "`r?`n", ' | '))
 }
 catch {
