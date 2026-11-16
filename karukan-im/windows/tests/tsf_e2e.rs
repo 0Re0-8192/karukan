@@ -2,7 +2,8 @@
 //! DLL: a thread manager and a store-less context are created in-process,
 //! the text service is activated by hand and driven through its key sink.
 //!
-//! Needs `KARUKAN_IMSERVER` (path to karukan-imserver.exe); skipped otherwise.
+//! Needs `KARUKAN_IMSERVER` (path to karukan-imserver.exe; skipped otherwise)
+//! and `KARUKAN_TSF_DEBUG` (the unregistered service cannot advise its key sink).
 #![cfg(windows)]
 
 use std::cell::RefCell;

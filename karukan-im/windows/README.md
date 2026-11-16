@@ -28,11 +28,18 @@ cargo build --release -p karukan-im --bin karukan-imserver
 cargo build --release -p karukan-tsf
 ```
 
-DLL と `karukan-imserver.exe` を同じフォルダに置きます。`portable.flag` を置くと、設定・学習・モデルをそのフォルダ内(`data`・`config`・`hf`)に保存します。
+`rust-version` が足りないエラーが出たら、新しい toolchain を指定します(`cargo +1.96.0 build ...`)。
 
-## 登録
+## インストール・更新
 
-管理者権限で `regsvr32 karukan_tsf.dll`(解除は `/u`)。64 ビットのアプリでのみ使えます。
+```powershell
+.\karukan-im\windows	ools\install.ps1
+```
+
+`targetelease` の DLL とサーバーを `dist` へ置き(動作中のものは名前を変えて退避)、`portable.flag` を作り、システム辞書 `data\dict.bin` が無ければ取得し、DLL を登録(管理者権限)して、現在のユーザーで有効にします。解除は `-Uninstall`。置き場は `-Dest`、辞書を取らないなら `-SkipDict`。
+`portable.flag` があると、設定・学習・モデルをそのフォルダ内(`data`・`config`・`hf`)に保存します。更新した DLL は、アプリを開き直すと読み込まれます。64 ビットのアプリでのみ使えます。
+
+テスト: `KARUKAN_TSF_DEBUG=1 KARUKAN_IMSERVER=<karukan-imserver.exe> cargo test --release -p karukan-tsf --test tsf_e2e -- --nocapture`
 
 ## 英単語混じり
 
