@@ -447,6 +447,7 @@ impl InputMethodEngine {
         }
 
         self.record_learning(&reading, &text);
+        self.note_live_commit(&reading, &text);
         self.end_composition();
 
         // HideCandidates is required here: the auto-suggest/live-conversion

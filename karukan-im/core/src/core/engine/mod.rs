@@ -6,6 +6,7 @@
 mod cache;
 mod chunk;
 mod conversion;
+mod corrections;
 mod cursor;
 mod display;
 mod english_mix;
@@ -158,6 +159,10 @@ pub struct InputMethodEngine {
     english_live: Option<String>,
     /// F6-F10 / 無変換 cycle state: (key id, selected form index)
     fkey_cycle: Option<(u8, usize)>,
+    /// The F-key whose cycle the last non-F-key press ended (see `corrections`)
+    fkey_committed: Option<u8>,
+    /// Learned English words and the corrections log (see `corrections`)
+    corrections: corrections::Corrections,
     /// LRU cache of model conversion results keyed by reading + lctx +
     /// strategy. Content-addressed, so it survives commits and resets.
     conversion_cache: ConversionCache,
@@ -204,6 +209,8 @@ impl InputMethodEngine {
             raw_keys: String::new(),
             english_live: None,
             fkey_cycle: None,
+            fkey_committed: None,
+            corrections: corrections::Corrections::default(),
             conversion_cache: ConversionCache::default(),
             suppress_suggest: false,
             shown_suggestions: CandidateList::default(),
@@ -663,6 +670,8 @@ impl InputMethodEngine {
 
         // Any key other than F6-F10 / 無変換 ends the script-cycle.
         if !function_keys::is_script_key(key.keysym) {
+            // remembered for the commit this very key may trigger
+            self.fkey_committed = self.fkey_cycle.map(|(k, _)| k);
             self.fkey_cycle = None;
         }
 
@@ -733,6 +742,7 @@ impl InputMethodEngine {
             InputState::Composing { .. } => {
                 let (reading, text) = self.resolve_composing_commit();
                 self.record_learning(&reading, &text);
+                self.note_live_commit(&reading, &text);
                 self.end_composition();
                 text
             }

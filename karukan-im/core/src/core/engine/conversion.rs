@@ -826,6 +826,13 @@ impl InputMethodEngine {
     /// Record the committed conversion in the learning cache and end the
     /// composition.
     pub(super) fn finish_conversion(&mut self, text: &str, reading: &Option<String>) {
+        let first = match &self.state {
+            InputState::Conversion { candidates, .. } => {
+                candidates.candidates().first().map(|c| c.text.clone())
+            }
+            _ => None,
+        };
+        self.note_conversion_commit(text, first.as_deref());
         if let Some(reading) = reading {
             self.record_learning(reading, text);
         }

@@ -58,7 +58,11 @@ pub(super) enum Piece {
 /// Best split of `raw` (ASCII letters) into pieces, or `None` when it has no
 /// English word or does not split at all. `kana` says whether a run of
 /// keystrokes is complete kana on its own.
-pub(super) fn split(raw: &str, kana: impl Fn(&str) -> bool) -> Option<Vec<Piece>> {
+pub(super) fn split(
+    raw: &str,
+    kana: impl Fn(&str) -> bool,
+    learned: impl Fn(&str) -> bool,
+) -> Option<Vec<Piece>> {
     if raw.len() < MIN_WORD || !raw.bytes().all(|b| b.is_ascii_alphabetic()) {
         return None;
     }
@@ -100,7 +104,10 @@ pub(super) fn split(raw: &str, kana: impl Fn(&str) -> bool) -> Option<Vec<Piece>
         };
         for end in (i + MIN_WORD)..=n {
             let run = &lower[i..end];
-            if words.contains(run) && (!kana(run) || names().contains(run)) {
+            let learned = learned(run);
+            if (words.contains(run) || learned)
+                && (!kana(run) || names().contains(run) || learned)
+            {
                 consider(end, true, &mut here);
             }
         }
@@ -166,7 +173,11 @@ impl InputMethodEngine {
 
     /// Pieces for the keystrokes in `raw` (see [`split`]).
     fn english_pieces(&self, raw: &str) -> Option<Vec<Piece>> {
-        split(raw, |run| self.kana_of(run).is_some())
+        split(
+            raw,
+            |run| self.kana_of(run).is_some(),
+            |w| self.corrections.is_known(w),
+        )
     }
 
     /// English words verbatim; kana runs through the model, each with the
@@ -302,7 +313,7 @@ mod tests {
     }
 
     fn show(raw: &str) -> Option<String> {
-        split(raw, is_kana).map(|ps| {
+        split(raw, is_kana, |_| false).map(|ps| {
             ps.iter()
                 .map(|p| match p {
                     Piece::English(w) => format!("[{w}]"),

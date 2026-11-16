@@ -220,6 +220,7 @@ impl InputMethodEngine {
         if !enabled || self.learning.is_some() {
             return;
         }
+        self.init_corrections();
 
         let cache = match Settings::learning_file() {
             Some(path) if path.exists() => match LearningCache::load(&path, config) {
