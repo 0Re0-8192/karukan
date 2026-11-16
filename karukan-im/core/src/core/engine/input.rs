@@ -41,7 +41,15 @@ impl InputMethodEngine {
             let reading = full_reading.clone();
             self.chunked_auto_suggest().map(|converted| {
                 self.english_live = self.live_english(&converted);
-                let converted = self.english_live.clone().unwrap_or(converted);
+                // The window lists the whole line, pending keystrokes
+                // included (the preedit appends them after the live text).
+                let converted = match &self.english_live {
+                    Some(text) => {
+                        let pending = self.input_buf.pending();
+                        format!("{text}{}", self.converters.romaji.convert_flush(&pending))
+                    }
+                    None => converted,
+                };
                 (vec![converted], reading)
             })
         } else {

@@ -230,7 +230,19 @@ impl InputMethodEngine {
                 if !rest.chars().all(|c| c.is_ascii_alphabetic()) {
                     return None;
                 }
-                self.english_pieces(head).map(|p| (p, rest.to_string()))
+                let pieces = self.english_pieces(head)?;
+                // Cheap shape check before any model call: the text has to
+                // end with the pending tail the caller will append (a kana
+                // run counts as one non-ASCII char).
+                let shape: String = pieces
+                    .iter()
+                    .map(|p| match p {
+                        Piece::English(w) => w.as_str(),
+                        Piece::Kana(_) => "\u{3042}",
+                    })
+                    .chain(std::iter::once(rest))
+                    .collect();
+                shape.ends_with(tail.as_str()).then(|| (pieces, rest.to_string()))
             })?;
         let text = format!("{}{}", self.assemble_pieces(&pieces), rest);
         text.strip_suffix(tail.as_str()).map(str::to_string)
