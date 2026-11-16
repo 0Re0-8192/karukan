@@ -43,24 +43,25 @@ PROMPT = """あなたは日本語入力システム(IME)の辞書係です。以
 
 
 def read_new(path, since):
-    rows = []
+    """Oldest-first batch of at most KEEP records newer than `since`.
+
+    Returns (rows, newest): `newest` is the timestamp the next run resumes
+    after (records the filter drops still count as read).
+    """
+    batch = []
     if not os.path.exists(path):
-        return rows, since
-    newest = since
+        return [], since
     with open(path, encoding="utf-8") as f:
         for line in f:
             parts = line.rstrip("\n").split("\t")
             if len(parts) != 6 or not parts[0].isdigit():
                 continue
             ts = int(parts[0])
-            if ts <= since:
-                continue
-            newest = max(newest, ts)
-            kind, raw, reading, first, committed = parts[1:]
-            if SENSITIVE.search(raw) or SENSITIVE.search(committed):
-                continue
-            rows.append((kind, raw, reading, first, committed))
-    return rows[-KEEP:], newest
+            if ts > since:
+                batch.append((ts, tuple(parts[1:])))
+    batch = batch[:KEEP]
+    rows = [r for _, r in batch if not (SENSITIVE.search(r[1]) or SENSITIVE.search(r[4]))]
+    return rows, (batch[-1][0] if batch else since)
 
 
 def ask(url, prompt):
@@ -108,6 +109,9 @@ def main():
             pass
     rows, newest = read_new(log, since)
     if not rows:
+        if newest != since and not a.dry_run:  # all filtered out: still count as read
+            with open(state, "w") as f:
+                f.write(str(newest))
         print("nothing new")
         return 0
 

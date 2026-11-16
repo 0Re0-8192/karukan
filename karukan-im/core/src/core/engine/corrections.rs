@@ -7,9 +7,9 @@
 //! - `corrections.tsv` (data dir): one line per commit that differs from what
 //!   was offered first — the typed keys, the reading, the first candidate and
 //!   the text that was committed. A separate batch job (a local model, run
-//!   when the PC is idle) reads it and proposes dictionary entries. Lines
-//!   older than [`KEEP_DAYS`] are dropped at startup; nothing is ever sent
-//!   anywhere.
+//!   when the PC is idle) reads it and proposes dictionary entries. The log
+//!   is kept for good (the batch job remembers how far it has read); nothing
+//!   is ever sent anywhere.
 
 use std::collections::HashSet;
 use std::fs::OpenOptions;
@@ -19,7 +19,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::*;
 
-const KEEP_DAYS: u64 = 30;
 const MAX_RAW: usize = 120;
 
 #[derive(Default)]
@@ -41,31 +40,11 @@ fn is_word(s: &str) -> bool {
 }
 
 impl Corrections {
-    /// Load the learned words and drop log lines past the retention window.
+    /// Load the learned words.
     pub(super) fn open(dir: PathBuf) -> Self {
         let english = std::fs::read_to_string(dir.join("user_english.txt"))
             .map(|t| t.lines().map(|l| l.trim().to_ascii_lowercase()).filter(|w| is_word(w)).collect())
             .unwrap_or_default();
-        let log = dir.join("corrections.tsv");
-        if let Ok(text) = std::fs::read_to_string(&log) {
-            let cutoff = now().saturating_sub(KEEP_DAYS * 86_400);
-            let kept: Vec<&str> = text
-                .lines()
-                .filter(|l| {
-                    l.split('\t')
-                        .next()
-                        .and_then(|t| t.parse::<u64>().ok())
-                        .is_some_and(|t| t >= cutoff)
-                })
-                .collect();
-            if kept.len() != text.lines().count() {
-                let mut out = kept.join("\n");
-                if !out.is_empty() {
-                    out.push('\n');
-                }
-                let _ = std::fs::write(&log, out);
-            }
-        }
         Self {
             dir: Some(dir),
             english,
