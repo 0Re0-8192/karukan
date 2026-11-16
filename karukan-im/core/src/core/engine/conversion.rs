@@ -96,15 +96,22 @@ impl CandidateBuilder {
 
     /// Insert right behind the first model answer (or at the end when the
     /// model gave none), skipping duplicates.
-    fn push_after_first_model(&mut self, ac: AnnotatedCandidate) {
+    fn push_english(&mut self, leads: bool, ac: AnnotatedCandidate) {
         if !self.seen.insert(ac.text.clone()) {
             return;
         }
-        let at = self
-            .candidates
-            .iter()
-            .position(|c| c.source == CandidateSource::Model)
-            .map_or(self.candidates.len(), |i| i + 1);
+        let at = if leads {
+            // behind the learning candidates, ahead of everything else
+            self.candidates
+                .iter()
+                .position(|c| c.source != CandidateSource::Learning)
+                .unwrap_or(self.candidates.len())
+        } else {
+            self.candidates
+                .iter()
+                .position(|c| c.source == CandidateSource::Model)
+                .map_or(self.candidates.len(), |i| i + 1)
+        };
         self.candidates.insert(at, ac);
     }
 
@@ -394,7 +401,11 @@ impl InputMethodEngine {
         // English words typed as plain romaji (`windowsdeha` →
         // `windowsでは`) ride right behind the model's first answer.
         if let Some(text) = self.english_mix_candidate(reading) {
-            builder.push_after_first_model(
+            // Leftover romaji in the reading (うぃんどws) means the kana
+            // reading failed on its own: the English reading leads.
+            let leads = reading.chars().any(|c| c.is_ascii_alphabetic());
+            builder.push_english(
+                leads,
                 AnnotatedCandidate::new(text, CandidateSource::Rewriter)
                     .with_description(Some("英単語混じり".to_string())),
             );

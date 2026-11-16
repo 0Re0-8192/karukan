@@ -93,6 +93,20 @@ pub(super) fn mix(raw: &str, kana: impl Fn(&str) -> Option<String>) -> Option<St
 }
 
 impl InputMethodEngine {
+    /// Whether the typed romaji left something that cannot be kana: an ASCII
+    /// letter already settled into the reading (`ウィンドws`) or a pending
+    /// tail no kana starts with (`ws`). Plain Japanese typing never does.
+    fn has_romaji_leftover(&self, converted: &str) -> bool {
+        let pending = self.input_buf.pending();
+        converted.chars().any(|c| c.is_ascii_alphabetic())
+            || self
+                .input_buf
+                .reading()
+                .chars()
+                .any(|c| c.is_ascii_alphabetic())
+            || (!pending.is_empty() && self.converters.romaji.pending_expansions(&pending).is_empty())
+    }
+
     /// The English-mixed reading of what was typed, when the keystrokes are
     /// known and consistent with the reading.
     pub(super) fn english_mix_candidate(&self, reading: &str) -> Option<String> {
@@ -100,6 +114,9 @@ impl InputMethodEngine {
             return None;
         }
         let romaji = &self.converters.romaji;
+        // Plain Japanese typing (ohayou, genkidesuka) must not sprout
+        // English readings; a lone English word (tokyo) may.
+        let leftover = self.has_romaji_leftover("");
         // Edits around the keystrokes (cursor moves, mid-buffer inserts)
         // leave raw_keys stale; only trust it when it reproduces the reading.
         if romaji.convert_flush(&self.raw_keys) != reading {
@@ -109,7 +126,47 @@ impl InputMethodEngine {
             let k = romaji.convert_flush(run);
             (!k.is_empty() && k.chars().all(|c| !c.is_ascii())).then_some(k)
         })?;
-        (text != reading).then_some(text)
+        let whole_word = text.eq_ignore_ascii_case(&self.raw_keys) && text.len() >= 4;
+        ((leftover || whole_word) && text != reading).then_some(text)
+    }
+}
+
+impl InputMethodEngine {
+    /// Live conversion text with English words restored, for a model answer
+    /// that still carries unresolved romaji (`ウィンドws`): the keystrokes
+    /// before the pending tail, mixed. `None` when the answer is clean or
+    /// the keystrokes do not make an English-mixed reading.
+    pub(super) fn live_english(&self, converted: &str) -> Option<String> {
+        if self.mode.current() != InputMode::Hiragana || self.raw_keys.is_empty() {
+            return None;
+        }
+        let romaji = &self.converters.romaji;
+        let pending = self.input_buf.pending();
+        let tail = romaji.convert_flush(&pending);
+        if !self.has_romaji_leftover(converted) {
+            return None;
+        }
+        if romaji.convert_flush(&self.raw_keys) != self.input_buf.settled_reading(romaji) {
+            return None;
+        }
+        let kana = |run: &str| {
+            let k = romaji.convert_flush(run);
+            (!k.is_empty() && k.chars().all(|c| !c.is_ascii())).then_some(k)
+        };
+        // The caller appends `tail` (the pending keystrokes as typed) after
+        // this text, so the mixed text must end with it. A partial last
+        // syllable (`windowsd`) is carried over verbatim.
+        let raw = &self.raw_keys;
+        let n = raw.len();
+        let text = (0..=3.min(n))
+            .filter(|k| raw.is_char_boundary(n - k))
+            .find_map(|k| {
+                let (head, rest) = raw.split_at(n - k);
+                (rest.chars().all(|c| c.is_ascii_alphabetic()))
+                    .then(|| mix(head, kana).map(|t| format!("{t}{rest}")))
+                    .flatten()
+            })?;
+        text.strip_suffix(tail.as_str()).map(str::to_string)
     }
 }
 

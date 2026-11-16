@@ -35,3 +35,19 @@ fn plain_japanese_gets_no_mixed_candidate() {
     let list = candidates_after_space(&mut engine);
     assert!(list.iter().all(|t| t.chars().all(|c| !c.is_ascii_alphabetic())), "{list:?}");
 }
+
+#[test]
+fn valid_romaji_that_spells_english_words_is_not_hijacked() {
+    // ohayou / genkidesuka contain English words (you, gen…) but are
+    // perfectly good kana typing.
+    for typed in ["ohayou", "genkidesuka", "tabemashita"] {
+        let mut engine = InputMethodEngine::new();
+        engine.converters.kanji = None;
+        type_str(&mut engine, typed);
+        let list = candidates_after_space(&mut engine);
+        assert!(
+            list.iter().all(|t| t.chars().all(|c| !c.is_ascii_alphabetic())),
+            "{typed}: {list:?}"
+        );
+    }
+}

@@ -38,8 +38,10 @@ impl InputMethodEngine {
                 || karukan_engine::contains_kana(&full_reading));
         let candidates = if convert {
             let reading = full_reading.clone();
-            self.chunked_auto_suggest()
-                .map(|converted| (vec![converted], reading))
+            self.chunked_auto_suggest().map(|converted| {
+                let converted = self.live_english(&converted).unwrap_or(converted);
+                (vec![converted], reading)
+            })
         } else {
             self.chunks.clear();
             None
