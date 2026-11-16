@@ -212,6 +212,9 @@ pub struct ConversionSettings {
     pub n_threads: u32,
     /// Enable live conversion at startup (Ctrl+Shift+L still toggles at runtime)
     pub live_conversion: bool,
+    /// Offer English words typed as plain romaji (`windowsdeha` →
+    /// `windowsでは`) in live conversion and as a Space candidate
+    pub english_mix: bool,
 }
 
 /// Learning cache settings

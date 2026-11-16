@@ -179,7 +179,10 @@ impl InputMethodEngine {
     /// conversion, when the keystrokes are known and consistent with the
     /// reading.
     pub(super) fn english_mix_candidate(&mut self, reading: &str) -> Option<String> {
-        if self.mode.current() != InputMode::Hiragana || self.raw_keys.is_empty() {
+        if !self.config.english_mix
+            || self.mode.current() != InputMode::Hiragana
+            || self.raw_keys.is_empty()
+        {
             return None;
         }
         let leftover = self.has_romaji_leftover("");
@@ -211,7 +214,10 @@ impl InputMethodEngine {
     /// before the pending tail, mixed. `None` when the answer is clean or
     /// the keystrokes do not make an English-mixed reading.
     pub(super) fn live_english(&mut self, converted: &str) -> Option<String> {
-        if self.mode.current() != InputMode::Hiragana || self.raw_keys.is_empty() {
+        if !self.config.english_mix
+            || self.mode.current() != InputMode::Hiragana
+            || self.raw_keys.is_empty()
+        {
             return None;
         }
         let pending = self.input_buf.pending();

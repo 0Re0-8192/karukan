@@ -5,6 +5,7 @@
 ```toml
 [conversion]
 live_conversion = true          # ライブ変換を起動時に有効化（Ctrl+Shift+L で実行中も切替。既定ON）
+english_mix = true              # ローマ字のまま打った英単語を英語で出す（windowsdeha → windowsでは）。不要なら false
 chunk_chars = 30                # 一度にAI変換する Chunk の最大文字数（[Chunk](chunking.md) 参照）
 chunk_symbols = 1               # Chunk に残せる記号（、。！？など）の数
 chunk_digits = 0                # Chunk に残せる数字の桁数（0 = 数字はAI変換にかけない）

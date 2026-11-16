@@ -57,6 +57,8 @@ light_model = "jinen-v2-xsmall-q8"
 n_threads = 4
 # 起動時にライブ変換を有効にする（Ctrl+Shift+L で実行中も切替可能）
 live_conversion = true
+# ローマ字のまま打った英単語を英語で出す（windowsdeha → windowsでは）
+english_mix = true
 # ユーザー辞書: ~/.local/share/karukan-im/user_dicts/ に辞書ファイルを配置（Mozc TSV or KRKN binary）
 
 # 変換モデル。model / light_model はここのキーを参照する。値は 2 通り:

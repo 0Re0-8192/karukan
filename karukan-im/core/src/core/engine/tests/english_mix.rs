@@ -68,3 +68,13 @@ fn a_single_capital_word_stays_english() {
     type_str(&mut engine, "Linuxno");
     assert_eq!(engine.preedit().unwrap().text(), "Linuxno");
 }
+
+#[test]
+fn can_be_switched_off() {
+    let mut engine = InputMethodEngine::new();
+    engine.converters.kanji = None;
+    engine.config.english_mix = false;
+    type_str(&mut engine, "windowsdeha");
+    let list = candidates_after_space(&mut engine);
+    assert!(list.iter().all(|t| t != "windowsでは"), "{list:?}");
+}
