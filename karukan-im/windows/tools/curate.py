@@ -133,7 +133,7 @@ def main():
             continue
         reading, surface = str(e.get("reading", "")), str(e.get("surface", ""))
         # the model must not invent: the surface has to be in what was committed
-        if HIRAGANA.match(reading) and surface and len(surface) <= 30 and surface in committed:
+        if HIRAGANA.match(reading) and surface and surface != reading and len(surface) <= 30 and surface in committed:
             japanese.append((reading, surface))
 
     print(f"english: {english}")

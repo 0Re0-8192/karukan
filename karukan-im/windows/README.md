@@ -37,3 +37,7 @@ DLL と `karukan-imserver.exe` を同じフォルダに置きます。`portable.
 ## 英単語混じり
 
 英単語をローマ字のまま打っても（`windowsdeha`）、変換候補の先頭付近に `windowsでは` が出ます。単語は同梱の頻出語リスト（`karukan-im/core/data/english_words.txt`）から、3 文字以上で、打鍵の半分以上が英語になる場合だけ採用します。
+
+### 訂正からの自動学習
+
+F9/F10 で英語にした語・Shift で打った語は、次の打鍵から自動で英単語として扱います（`user_english.txt`）。別の候補を選んだ記録は `corrections.tsv`（ローカルのみ、30 日で消える）に残り、PC が空いているときに `tools\curate_run.ps1` がローカルモデル（llama-server、CPU のみ、Gemma 4 26B-A4B）で固有名詞だけ選び、`user_dicts\auto.txt` と `user_english.txt` に追記します。登録は `tools\install_curate_task.ps1`（4 時間ごと、10 分操作が無いときだけ、ログは `data\curate.log`）。外部には何も送りません。
