@@ -1,7 +1,7 @@
-"""Turn the IME's local corrections log into dictionary entries.
+"""Turn the IME's local typing log into dictionary entries.
 
-Reads `corrections.tsv` (written by karukan-imserver), asks a local
-OpenAI-compatible model which of the corrections are worth remembering, and
+Reads `corrections.tsv` (written by karukan-imserver: every committed input),
+asks a local OpenAI-compatible model which entries are worth remembering, and
 writes:
 
   user_english.txt        English words (one per line)
@@ -9,7 +9,8 @@ writes:
 
 Nothing leaves the machine: the model is a local server (default
 http://127.0.0.1:8080). Run it when the PC is idle; it exits quickly when
-there is nothing new.
+there is nothing new, and works through a long log in batches of KEEP records
+(at most --batches per run), remembering how far it got in `curate.state`.
 
     python curate.py --data D:\\path\\to\\data [--dry-run] [--stub reply.json]
 """
@@ -21,20 +22,23 @@ import re
 import sys
 import urllib.request
 
-KEEP = 300  # records per run
+KEEP = 300  # records per batch
 SENSITIVE = re.compile(r"@|://|\d{6,}|[A-Za-z0-9_\-]{24,}")
 HIRAGANA = re.compile(r"^[ぁ-んー]{1,40}$")
 WORD = re.compile(r"^[A-Za-z]{3,32}$")
+LATIN = re.compile(r"[A-Za-z]")
 
-PROMPT = """あなたは日本語入力システム(IME)の辞書係です。以下はユーザーが入力を訂正・確定した記録です。
+PROMPT = """あなたは日本語入力システム(IME)の辞書係です。以下はユーザーが入力を確定した記録です。
 各行は `種類 / 打ったキー / 読み / 最初の候補 / 確定した文字` です。
-種類: fkey=F9/F10で英語にした, pick=別の候補を選んだ, live=ライブ変換の結果をそのまま確定。
+種類: conv=最初の候補のまま確定, pick=別の候補を選んだ, fkey=F9/F10で英語にした, live=ライブ変換の結果をそのまま確定。
 
 辞書に登録する価値があるものだけを選んでください。
 - english: 打ったキーが英単語・製品名・固有名詞のつづりで、確定した文字がそのつづりと一致するもの。小文字で。
-- japanese: 読みと確定した文字の組で、人名・地名・固有名詞・専門用語など、次も同じ変換をしたいもの。
+- japanese: 読みと確定した文字の組で、人名・地名・固有名詞・専門用語・よく使う言い回しなど、次も同じ変換をしたいもの。
   読みはひらがなだけ。確定した文字の一部ではなく、語として切り出すこと。
-次は選ばない: 一般的な語、文全体、数字や記号だけ、個人を特定できる情報(住所・電話・メール・パスワード)、迷うもの。
+  何度も出てくる語、または pick/fkey で選び直した語を優先する。
+次は選ばない: 一般的な語、文全体、数字や記号だけ、パスワード・認証情報、迷うもの。
+内容の良し悪しは判断しない(辞書の整理だけが仕事)。
 出力は次のJSONだけ(説明は不要):
 {"english": ["word", ...], "japanese": [{"reading": "よみ", "surface": "表記"}, ...]}
 
@@ -60,7 +64,18 @@ def read_new(path, since):
             if ts > since:
                 batch.append((ts, tuple(parts[1:])))
     batch = batch[:KEEP]
-    rows = [r for _, r in batch if not (SENSITIVE.search(r[1]) or SENSITIVE.search(r[4]))]
+    rows, seen = [], set()
+    for _, r in batch:
+        kind, raw, reading, first, committed = r
+        if SENSITIVE.search(raw) or SENSITIVE.search(committed):
+            continue
+        # an ordinary conversion taken as offered has nothing to teach the dictionary
+        if kind in ("conv", "live") and not LATIN.search(committed):
+            continue
+        if r in seen:
+            continue
+        seen.add(r)
+        rows.append(r)
     return rows, (batch[-1][0] if batch else since)
 
 
@@ -91,12 +106,58 @@ def parse(reply):
         return {}
 
 
+def pick(rows, out):
+    """What of the model's reply is allowed through: it must not invent."""
+    committed = "\n".join(r[4] for r in rows)
+    known_words = {r[1].lower() for r in rows} | {x.lower() for x in re.findall(r"[A-Za-z]{3,32}", committed)}
+    english = sorted(
+        {
+            w.lower()
+            for w in out.get("english", [])
+            if isinstance(w, str) and WORD.match(w) and w.lower() in known_words
+        }
+    )
+    japanese = []
+    for e in out.get("japanese", []):
+        if not isinstance(e, dict):
+            continue
+        reading, surface = str(e.get("reading", "")), str(e.get("surface", ""))
+        if HIRAGANA.match(reading) and surface and surface != reading and len(surface) <= 30 and surface in committed:
+            japanese.append((reading, surface))
+    return english, japanese
+
+
+def save(data, english, japanese):
+    eng_path = os.path.join(data, "user_english.txt")
+    have = set()
+    if os.path.exists(eng_path):
+        have = {l.strip().lower() for l in open(eng_path, encoding="utf-8")}
+    with open(eng_path, "a", encoding="utf-8") as f:
+        for w in english:
+            if w not in have:
+                have.add(w)
+                f.write(w + "\n")
+
+    dict_dir = os.path.join(data, "user_dicts")
+    os.makedirs(dict_dir, exist_ok=True)
+    dict_path = os.path.join(dict_dir, "auto.txt")
+    known = set()
+    if os.path.exists(dict_path):
+        known = {tuple(l.split("\t")[:2]) for l in open(dict_path, encoding="utf-8") if not l.startswith("#")}
+    with open(dict_path, "a", encoding="utf-8") as f:
+        for reading, surface in japanese:
+            if (reading, surface) not in known:
+                known.add((reading, surface))
+                f.write(f"{reading}\t{surface}\t固有名詞\tauto\n")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", required=True, help="the IME data directory")
     ap.add_argument("--url", default="http://127.0.0.1:8080")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--stub", help="read the model reply from this file instead")
+    ap.add_argument("--batches", type=int, default=6, help="batches of KEEP records per run")
     a = ap.parse_args()
 
     log = os.path.join(a.data, "corrections.tsv")
@@ -107,66 +168,38 @@ def main():
             since = int(open(state).read().strip())
         except ValueError:
             pass
-    rows, newest = read_new(log, since)
-    if not rows:
-        if newest != since and not a.dry_run:  # all filtered out: still count as read
+
+    worked = False
+    for _ in range(max(1, a.batches)):
+        rows, newest = read_new(log, since)
+        if newest == since:
+            break
+        if not rows:  # everything in the batch was filtered out: still counts as read
+            if a.dry_run:
+                break
+            since = newest
             with open(state, "w") as f:
-                f.write(str(newest))
-        print("nothing new")
-        return 0
-
-    prompt = PROMPT + "\n".join("\t".join(r) for r in rows)
-    if a.dry_run and not a.stub:
-        print(prompt)
-        return 0
-    reply = open(a.stub, encoding="utf-8").read() if a.stub else ask(a.url, prompt)
-    out = parse(reply)
-
-    committed = "\n".join(r[4] for r in rows)
-    raws = {r[1].lower() for r in rows}
-    english = sorted(
-        {
-            w.lower()
-            for w in out.get("english", [])
-            if isinstance(w, str) and WORD.match(w) and w.lower() in raws | {x.lower() for x in re.findall(r"[A-Za-z]{3,32}", committed)}
-        }
-    )
-    japanese = []
-    for e in out.get("japanese", []):
-        if not isinstance(e, dict):
+                f.write(str(since))
             continue
-        reading, surface = str(e.get("reading", "")), str(e.get("surface", ""))
-        # the model must not invent: the surface has to be in what was committed
-        if HIRAGANA.match(reading) and surface and surface != reading and len(surface) <= 30 and surface in committed:
-            japanese.append((reading, surface))
 
-    print(f"english: {english}")
-    print(f"japanese: {japanese}")
-    if a.dry_run:
-        return 0
+        prompt = PROMPT + "\n".join("\t".join(r) for r in rows)
+        if a.dry_run and not a.stub:
+            print(prompt)
+            return 0
+        reply = open(a.stub, encoding="utf-8").read() if a.stub else ask(a.url, prompt)
+        english, japanese = pick(rows, parse(reply))
+        print(f"english: {english}")
+        print(f"japanese: {japanese}")
+        worked = True
+        if a.dry_run:
+            return 0
+        save(a.data, english, japanese)
+        since = newest
+        with open(state, "w") as f:
+            f.write(str(since))
 
-    eng_path = os.path.join(a.data, "user_english.txt")
-    have = set()
-    if os.path.exists(eng_path):
-        have = {l.strip().lower() for l in open(eng_path, encoding="utf-8")}
-    with open(eng_path, "a", encoding="utf-8") as f:
-        for w in english:
-            if w not in have:
-                f.write(w + "\n")
-
-    dict_dir = os.path.join(a.data, "user_dicts")
-    os.makedirs(dict_dir, exist_ok=True)
-    dict_path = os.path.join(dict_dir, "auto.txt")
-    known = set()
-    if os.path.exists(dict_path):
-        known = {tuple(l.split("\t")[:2]) for l in open(dict_path, encoding="utf-8") if not l.startswith("#")}
-    with open(dict_path, "a", encoding="utf-8") as f:
-        for reading, surface in japanese:
-            if (reading, surface) not in known:
-                f.write(f"{reading}\t{surface}\t固有名詞\tauto\n")
-
-    with open(state, "w") as f:
-        f.write(str(newest))
+    if not worked:
+        print("nothing new")
     return 0
 
 

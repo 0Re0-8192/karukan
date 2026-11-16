@@ -1,15 +1,16 @@
-//! What the user corrected, kept locally for a later pass.
+//! What the user typed, kept locally for a later pass.
 //!
 //! Two things come out of a commit:
 //! - `user_english.txt` (data dir): English words the user spelled out on
 //!   purpose (Shift-started words, F9/F10). They are picked up by the English
 //!   mix from the next keystroke on, so nothing has to be registered by hand.
-//! - `corrections.tsv` (data dir): one line per commit that differs from what
-//!   was offered first — the typed keys, the reading, the first candidate and
-//!   the text that was committed. A separate batch job (a local model, run
-//!   when the PC is idle) reads it and proposes dictionary entries. The log
-//!   is kept for good (the batch job remembers how far it has read); nothing
-//!   is ever sent anywhere.
+//! - `corrections.tsv` (data dir): one line per committed input — the typed
+//!   keys, the reading, the first candidate and the text that was committed,
+//!   with a kind: `conv` (taken as offered), `pick` (another candidate),
+//!   `fkey` (F9/F10), `live` (live-conversion text). A separate batch job (a
+//!   local model, run when the PC is idle) reads it and proposes dictionary
+//!   entries. The log is kept for good (the batch job remembers how far it
+//!   has read); nothing is ever sent anywhere.
 
 use std::collections::HashSet;
 use std::fs::OpenOptions;
@@ -125,7 +126,7 @@ impl InputMethodEngine {
             }
             Some(_) => "fkey",
             None if first.is_some_and(|f| f != committed) => "pick",
-            None => return,
+            None => "conv",
         };
         self.corrections
             .log(kind, &raw, &reading, first.unwrap_or(""), committed);
@@ -144,8 +145,6 @@ impl InputMethodEngine {
         if self.mode.current() == InputMode::Alphabet && is_word(&committed.replace(' ', "")) {
             self.corrections.learn_english(committed);
         }
-        if committed.chars().any(|c| c.is_ascii_alphabetic()) && committed != reading {
-            self.corrections.log("live", &raw, reading, "", committed);
-        }
+        self.corrections.log("live", &raw, reading, "", committed);
     }
 }
