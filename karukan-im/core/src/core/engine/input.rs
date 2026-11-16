@@ -176,6 +176,7 @@ impl InputMethodEngine {
     /// In alphabet mode, inserts directly; otherwise goes through romaji conversion.
     pub(super) fn start_input(&mut self, ch: char) -> EngineResult {
         self.clear_composition();
+        self.raw_keys.push(ch);
 
         if self.mode.current() == InputMode::Alphabet {
             self.input_buf.push_direct(ch);
@@ -284,6 +285,12 @@ impl InputMethodEngine {
             Keysym::RIGHT => self.move_caret_right(),
             Keysym::HOME => self.move_caret_home(),
             Keysym::END => self.move_caret_end(),
+            Keysym::F6 => self.script_convert(6),
+            Keysym::F7 => self.script_convert(7),
+            Keysym::F8 => self.script_convert(8),
+            Keysym::F9 => self.script_convert(9),
+            Keysym::F10 => self.script_convert(10),
+            Keysym::MUHENKAN => self.script_convert(0),
             _ => {
                 if let Some(ch) = key.to_char()
                     && !key.modifiers.control_key
@@ -352,6 +359,7 @@ impl InputMethodEngine {
     /// Input a character during composing.
     /// In alphabet mode, inserts directly; otherwise goes through romaji conversion.
     pub(super) fn input_char(&mut self, ch: char) -> EngineResult {
+        self.raw_keys.push(ch);
         if matches!(self.mode.current(), InputMode::Alphabet | InputMode::Emoji) {
             self.edit_with_chunk_breaks(|e| e.input_buf.push_direct(ch));
             return self.refresh_input_state();

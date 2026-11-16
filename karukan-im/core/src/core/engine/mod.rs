@@ -9,6 +9,7 @@ mod conversion;
 mod cursor;
 mod display;
 mod filter;
+mod function_keys;
 mod guard;
 mod init;
 mod input;
@@ -148,6 +149,11 @@ pub struct InputMethodEngine {
     /// Shifted along with edits (`edit_with_chunk_breaks`) and cleared when
     /// the composition ends.
     chunk_breaks: Vec<usize>,
+    /// ASCII keystrokes typed into the current composition, kept so
+    /// F9/F10 can turn them back into (full/half-width) alphanumerics.
+    raw_keys: String,
+    /// F6-F10 / 無変換 cycle state: (key id, selected form index)
+    fkey_cycle: Option<(u8, usize)>,
     /// LRU cache of model conversion results keyed by reading + lctx +
     /// strategy. Content-addressed, so it survives commits and resets.
     conversion_cache: ConversionCache,
@@ -191,6 +197,8 @@ impl InputMethodEngine {
             live: LiveConversion::default(),
             chunks: Vec::new(),
             chunk_breaks: Vec::new(),
+            raw_keys: String::new(),
+            fkey_cycle: None,
             conversion_cache: ConversionCache::default(),
             suppress_suggest: false,
             shown_suggestions: CandidateList::default(),
@@ -296,6 +304,7 @@ impl InputMethodEngine {
         self.live.shown = false;
         self.chunks.clear();
         self.chunk_breaks.clear();
+        self.raw_keys.clear();
         self.shown_suggestions = CandidateList::default();
     }
 
@@ -644,6 +653,11 @@ impl InputMethodEngine {
             && (key.keysym == Keysym::KEY_V || key.keysym == Keysym::KEY_V_UPPER)
         {
             return self.toggle_verbose();
+        }
+
+        // Any key other than F6-F10 / 無変換 ends the script-cycle.
+        if !function_keys::is_script_key(key.keysym) {
+            self.fkey_cycle = None;
         }
 
         // Reset adaptive model flag when starting a new word (first key in Empty state)

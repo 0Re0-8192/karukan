@@ -605,6 +605,12 @@ impl InputMethodEngine {
             Keysym::UP => self.prev_candidate(),
             Keysym::PAGE_DOWN => self.next_candidate_page(),
             Keysym::PAGE_UP => self.prev_candidate_page(),
+            Keysym::F6 => self.script_convert(6),
+            Keysym::F7 => self.script_convert(7),
+            Keysym::F8 => self.script_convert(8),
+            Keysym::F9 => self.script_convert(9),
+            Keysym::F10 => self.script_convert(10),
+            Keysym::MUHENKAN => self.script_convert(0),
             // Ctrl+Backspace / Ctrl+Delete: delete the selected learning
             // candidate (the Mac "delete" key is Backspace). A non-learning
             // selection consumes the chord as a no-op.

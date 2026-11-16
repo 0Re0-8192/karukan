@@ -288,11 +288,17 @@ impl Settings {
 
     /// Get the data directory path
     pub fn data_dir() -> Option<PathBuf> {
+        if let Some(d) = std::env::var_os("KARUKAN_DATA_DIR") {
+            return Some(PathBuf::from(d));
+        }
         project_dirs().map(|dirs| dirs.data_dir().to_path_buf())
     }
 
     /// Get the configuration directory path
     pub fn config_dir() -> Option<PathBuf> {
+        if let Some(d) = std::env::var_os("KARUKAN_CONFIG_DIR") {
+            return Some(PathBuf::from(d));
+        }
         project_dirs().map(|dirs| dirs.config_dir().to_path_buf())
     }
 

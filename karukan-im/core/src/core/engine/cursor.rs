@@ -32,6 +32,7 @@ impl InputMethodEngine {
             // Nothing to delete
             return EngineResult::consumed();
         }
+        self.raw_keys.pop();
 
         if let Some(result) = self.try_reset_if_empty() {
             return result;

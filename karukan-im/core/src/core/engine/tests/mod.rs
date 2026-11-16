@@ -14,6 +14,7 @@ mod conversion;
 mod cursor;
 mod date;
 mod emoji;
+mod function_keys;
 mod katakana;
 mod learning;
 mod live_conversion;
@@ -30,7 +31,7 @@ mod strategy;
 mod surrounding;
 mod width;
 
-/// Engine seeded with a learning entry `reading → surface`, no kanji model.
+/// Engine seeded with a learning entry `reading ↁEsurface`, no kanji model.
 /// Bypasses `init.rs` (which gates learning on settings + file I/O) and
 /// injects a populated `LearningCache` directly.
 fn engine_with_learned(reading: &str, surface: &str) -> InputMethodEngine {
@@ -43,7 +44,7 @@ fn engine_with_learned(reading: &str, surface: &str) -> InputMethodEngine {
 }
 
 /// Seed the conversion cache so a main-model greedy call for `katakana`
-/// with `lctx` returns `texts` — a deterministic stand-in for the model
+/// with `lctx` returns `texts`  Ea deterministic stand-in for the model
 /// (with no converter loaded every strategy resolves to main greedy, and
 /// tests that beam under a real converter pin `StrategyMode::Main`).
 fn seed_model_cache(engine: &mut InputMethodEngine, katakana: &str, lctx: &str, texts: &[&str]) {

@@ -46,6 +46,17 @@ impl Keysym {
     /// keyboards.
     pub const HENKAN: Keysym = Keysym(0xff23);
 
+    /// 無変換 key (XK_Muhenkan)
+    pub const MUHENKAN: Keysym = Keysym(0xff22);
+
+    // Function keys (F6-F10 convert the composition to a fixed script, as
+    // in MS-IME)
+    pub const F6: Keysym = Keysym(0xffc3);
+    pub const F7: Keysym = Keysym(0xffc4);
+    pub const F8: Keysym = Keysym(0xffc5);
+    pub const F9: Keysym = Keysym(0xffc6);
+    pub const F10: Keysym = Keysym(0xffc7);
+
     // Space
     pub const SPACE: Keysym = Keysym(0x0020);
 
