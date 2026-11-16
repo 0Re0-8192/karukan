@@ -24,10 +24,25 @@ const SHORT_WORDS: [&str; 13] = [
 fn words() -> &'static HashSet<&'static str> {
     static WORDS: OnceLock<HashSet<&'static str>> = OnceLock::new();
     WORDS.get_or_init(|| {
+        // common words, plus product and tech names the list lacks
         include_str!("../../../data/english_words.txt")
             .lines()
+            .chain(include_str!("../../../data/english_extra.txt").lines())
             .map(str::trim)
             .filter(|w| w.len() >= 3 || SHORT_WORDS.contains(w))
+            .collect()
+    })
+}
+
+/// Long product and tech names that win even where the keystrokes also
+/// read as kana (`youtube` is also ようつべ).
+fn names() -> &'static HashSet<&'static str> {
+    static NAMES: OnceLock<HashSet<&'static str>> = OnceLock::new();
+    NAMES.get_or_init(|| {
+        include_str!("../../../data/english_extra.txt")
+            .lines()
+            .map(str::trim)
+            .filter(|w| w.len() >= 6)
             .collect()
     })
 }
@@ -85,7 +100,7 @@ pub(super) fn split(raw: &str, kana: impl Fn(&str) -> bool) -> Option<Vec<Piece>
         };
         for end in (i + MIN_WORD)..=n {
             let run = &lower[i..end];
-            if words.contains(run) && !kana(run) {
+            if words.contains(run) && (!kana(run) || names().contains(run)) {
                 consider(end, true, &mut here);
             }
         }
