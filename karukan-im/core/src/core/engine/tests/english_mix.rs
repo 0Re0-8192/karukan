@@ -51,3 +51,20 @@ fn valid_romaji_that_spells_english_words_is_not_hijacked() {
         );
     }
 }
+
+#[test]
+fn kana_continue_after_an_all_caps_word() {
+    let mut engine = InputMethodEngine::new();
+    engine.converters.kanji = None;
+    type_str(&mut engine, "PCno");
+    assert_eq!(engine.preedit().unwrap().text(), "PCの");
+    assert_eq!(engine.mode.current(), InputMode::Hiragana);
+}
+
+#[test]
+fn a_single_capital_word_stays_english() {
+    let mut engine = InputMethodEngine::new();
+    engine.converters.kanji = None;
+    type_str(&mut engine, "Linuxno");
+    assert_eq!(engine.preedit().unwrap().text(), "Linuxno");
+}

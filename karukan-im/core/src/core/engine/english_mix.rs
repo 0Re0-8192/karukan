@@ -186,7 +186,12 @@ impl InputMethodEngine {
         let raw = self.raw_keys.clone();
         // Edits around the keystrokes (cursor moves, mid-buffer inserts)
         // leave raw_keys stale; only trust it when it reproduces the reading.
-        if self.converters.romaji.convert_flush(&raw) != reading {
+        if !self
+            .converters
+            .romaji
+            .convert_flush(&raw)
+            .eq_ignore_ascii_case(reading)
+        {
             return None;
         }
         // A lone English word (tokyo) is offered even when it reads as kana.
@@ -215,7 +220,10 @@ impl InputMethodEngine {
             return None;
         }
         let romaji = &self.converters.romaji;
-        if romaji.convert_flush(&self.raw_keys) != self.input_buf.settled_reading(romaji) {
+        if !romaji
+            .convert_flush(&self.raw_keys)
+            .eq_ignore_ascii_case(&self.input_buf.settled_reading(romaji))
+        {
             return None;
         }
         // The caller appends `tail` (the pending keystrokes as typed) after

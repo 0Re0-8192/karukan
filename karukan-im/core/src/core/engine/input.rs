@@ -368,10 +368,34 @@ impl InputMethodEngine {
             .next()
     }
 
+    /// In alphabet mode (Shift+letter), a lowercase letter right after a
+    /// run of two or more capitals (`PC`, `USB`) closes that acronym: it is
+    /// the first romaji of the Japanese that follows. A single capital
+    /// (`Linux`, `Windows`) keeps running as one word.
+    fn acronym_just_ended(&self, ch: char) -> bool {
+        if self.mode.current() != InputMode::Alphabet
+            || !ch.is_ascii_lowercase()
+            || self.input_buf.cursor() != self.input_buf.char_count()
+        {
+            return false;
+        }
+        let text = self.input_buf.display();
+        let mut rev = text.chars().rev().peekable();
+        let mut caps = 0;
+        while rev.next_if(|c| c.is_ascii_uppercase()).is_some() {
+            caps += 1;
+        }
+        caps >= 2 && !rev.peek().is_some_and(|c| c.is_ascii_alphabetic())
+    }
+
     /// Input a character during composing.
     /// In alphabet mode, inserts directly; otherwise goes through romaji conversion.
     pub(super) fn input_char(&mut self, ch: char) -> EngineResult {
         self.raw_keys.push(ch);
+        if self.acronym_just_ended(ch) {
+            // `PC` + `no`: the all-caps word is over, the kana go on.
+            self.mode.exit_temporary();
+        }
         if matches!(self.mode.current(), InputMode::Alphabet | InputMode::Emoji) {
             self.edit_with_chunk_breaks(|e| e.input_buf.push_direct(ch));
             return self.refresh_input_state();
