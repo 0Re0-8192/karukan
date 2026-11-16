@@ -153,6 +153,9 @@ pub struct InputMethodEngine {
     /// ASCII keystrokes typed into the current composition, kept so
     /// F9/F10 can turn them back into (full/half-width) alphanumerics.
     raw_keys: String,
+    /// Live text with English words restored (see `english_mix`), set by
+    /// `refresh_input_state` while the typed romaji leaves unparsable letters.
+    english_live: Option<String>,
     /// F6-F10 / 無変換 cycle state: (key id, selected form index)
     fkey_cycle: Option<(u8, usize)>,
     /// LRU cache of model conversion results keyed by reading + lctx +
@@ -199,6 +202,7 @@ impl InputMethodEngine {
             chunks: Vec::new(),
             chunk_breaks: Vec::new(),
             raw_keys: String::new(),
+            english_live: None,
             fkey_cycle: None,
             conversion_cache: ConversionCache::default(),
             suppress_suggest: false,
@@ -306,6 +310,7 @@ impl InputMethodEngine {
         self.chunks.clear();
         self.chunk_breaks.clear();
         self.raw_keys.clear();
+        self.english_live = None;
         self.shown_suggestions = CandidateList::default();
     }
 

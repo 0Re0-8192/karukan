@@ -16,6 +16,7 @@ impl InputMethodEngine {
     /// Refresh the input state: rebuild preedit and run auto-suggest for candidates.
     pub(super) fn refresh_input_state(&mut self) -> EngineResult {
         let full_reading = self.input_buf.reading();
+        self.english_live = None;
 
         // Alphabet mode with active live conversion but no kana left to convert:
         // preserve the existing conversion display without re-running the model.
@@ -39,7 +40,8 @@ impl InputMethodEngine {
         let candidates = if convert {
             let reading = full_reading.clone();
             self.chunked_auto_suggest().map(|converted| {
-                let converted = self.live_english(&converted).unwrap_or(converted);
+                self.english_live = self.live_english(&converted);
+                let converted = self.english_live.clone().unwrap_or(converted);
                 (vec![converted], reading)
             })
         } else {

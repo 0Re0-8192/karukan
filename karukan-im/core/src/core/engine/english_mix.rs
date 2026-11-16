@@ -1,19 +1,25 @@
-//! Candidates that mix English words into the kana: `windowsdeha` (typed
-//! as plain romaji, so it reads うぃんどwsでは) also offers `windowsでは`.
+//! English words mixed into kana typing: `konopcnowindowsdehenkan` reads
+//! このpcのwindowsでへんかん, with the kana runs between the words converted
+//! by the model as usual.
 //!
-//! The typed keystrokes are split into English words (from a bundled list)
-//! and runs that are complete kana on their own; the split with the most
-//! English letters wins. Only offered when English makes up at least half of
-//! the keystrokes, and words need 3+ letters, so ordinary Japanese typing
-//! almost never produces one.
+//! The typed keystrokes are split into English words (a bundled list of
+//! common words) and runs that are complete kana. An English piece is only
+//! allowed where the keystrokes are *not* readable as kana (`windows`,
+//! `pc`), so ordinary Japanese typing (`ten`, `kan`, `ohayou`) is never
+//! reinterpreted, and the whole thing is only attempted when the romaji
+//! leaves something that cannot be kana.
 
 use std::collections::HashSet;
 use std::sync::OnceLock;
 
 use super::*;
 
-const MIN_WORD: usize = 3;
+const MIN_WORD: usize = 2;
 const MAX_KANA_RUN: usize = 12;
+/// Two-letter words are mostly noise (`uh`, `ou`); only these count.
+const SHORT_WORDS: [&str; 13] = [
+    "pc", "tv", "os", "id", "ok", "ui", "ai", "cd", "dj", "pm", "vs", "ip", "mp",
+];
 
 fn words() -> &'static HashSet<&'static str> {
     static WORDS: OnceLock<HashSet<&'static str>> = OnceLock::new();
@@ -21,23 +27,34 @@ fn words() -> &'static HashSet<&'static str> {
         include_str!("../../../data/english_words.txt")
             .lines()
             .map(str::trim)
-            .filter(|w| w.len() >= MIN_WORD)
+            .filter(|w| w.len() >= 3 || SHORT_WORDS.contains(w))
             .collect()
     })
 }
 
-/// Best split of `raw` (ASCII letters): English words verbatim, the rest
-/// through `kana` (None when a run is not complete kana).
-pub(super) fn mix(raw: &str, kana: impl Fn(&str) -> Option<String>) -> Option<String> {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum Piece {
+    /// An English word, as typed.
+    English(String),
+    /// Keystrokes that read as kana.
+    Kana(String),
+}
+
+/// Best split of `raw` (ASCII letters) into pieces, or `None` when it has no
+/// English word or does not split at all. `kana` says whether a run of
+/// keystrokes is complete kana on its own.
+pub(super) fn split(raw: &str, kana: impl Fn(&str) -> bool) -> Option<Vec<Piece>> {
     if raw.len() < MIN_WORD || !raw.bytes().all(|b| b.is_ascii_alphabetic()) {
         return None;
     }
     let lower = raw.to_ascii_lowercase();
+    // all kana already: nothing to restore
+    if kana(&lower) {
+        return None;
+    }
     let n = raw.len();
     let words = words();
 
-    // best[i]: (english letters, -pieces) for the suffix starting at i,
-    // with the piece that achieves it.
     #[derive(Clone)]
     struct Step {
         score: (usize, i64),
@@ -54,42 +71,50 @@ pub(super) fn mix(raw: &str, kana: impl Fn(&str) -> Option<String>) -> Option<St
         let mut here: Option<Step> = None;
         let consider = |end: usize, english: bool, here: &mut Option<Step>| {
             let Some(next) = &best[end] else { return };
-            let gain = if english { end - i } else { 0 };
+            // cubed, so one long word beats several short ones that merely
+            // fit (windows, not now+in+dow+sd)
+            let gain = if english { (end - i).pow(3) } else { 0 };
             let score = (next.score.0 + gain, next.score.1 - 1);
             if here.as_ref().is_none_or(|h| score > h.score) {
-                *here = Some(Step { score, end, english });
+                *here = Some(Step {
+                    score,
+                    end,
+                    english,
+                });
             }
         };
         for end in (i + MIN_WORD)..=n {
-            if words.contains(&lower[i..end]) {
+            let run = &lower[i..end];
+            if words.contains(run) && !kana(run) {
                 consider(end, true, &mut here);
             }
         }
         for end in (i + 1)..=n.min(i + MAX_KANA_RUN) {
-            if kana(&lower[i..end]).is_some() {
+            if kana(&lower[i..end]) {
                 consider(end, false, &mut here);
             }
         }
         best[i] = here;
     }
 
-    let start = best[0].as_ref()?;
-    let letters = start.score.0;
-    if letters < MIN_WORD || letters * 2 < n {
+    if best[0].as_ref()?.score.0 == 0 {
         return None;
     }
-    let mut out = String::new();
+    let mut pieces: Vec<Piece> = Vec::new();
     let mut i = 0;
     while i < n {
         let step = best[i].as_ref()?;
         if step.english {
-            out.push_str(&raw[i..step.end]);
+            pieces.push(Piece::English(raw[i..step.end].to_string()));
         } else {
-            out.push_str(&kana(&lower[i..step.end])?);
+            match pieces.last_mut() {
+                Some(Piece::Kana(run)) => run.push_str(&raw[i..step.end]),
+                _ => pieces.push(Piece::Kana(raw[i..step.end].to_string())),
+            }
         }
         i = step.end;
     }
-    Some(out)
+    Some(pieces)
 }
 
 impl InputMethodEngine {
@@ -104,68 +129,110 @@ impl InputMethodEngine {
                 .reading()
                 .chars()
                 .any(|c| c.is_ascii_alphabetic())
-            || (!pending.is_empty() && self.converters.romaji.pending_expansions(&pending).is_empty())
+            || (!pending.is_empty()
+                && self
+                    .converters
+                    .romaji
+                    .pending_expansions(&pending)
+                    .is_empty())
     }
 
-    /// The English-mixed reading of what was typed, when the keystrokes are
-    /// known and consistent with the reading.
-    pub(super) fn english_mix_candidate(&self, reading: &str) -> Option<String> {
+    /// The kana a run of keystrokes spells, `None` when part of it cannot
+    /// be kana. A last lone `n` counts as ん here: inside a longer word
+    /// (`kensaku`) it is one, so `ken` must not pass for an English word.
+    fn kana_of(&self, run: &str) -> Option<String> {
+        let k = self.converters.romaji.convert_flush(run);
+        let k = match k.strip_suffix('n') {
+            Some(head) => format!("{head}ん"),
+            None => k,
+        };
+        (!k.is_empty() && k.chars().all(|c| !c.is_ascii())).then_some(k)
+    }
+
+    /// Pieces for the keystrokes in `raw` (see [`split`]).
+    fn english_pieces(&self, raw: &str) -> Option<Vec<Piece>> {
+        split(raw, |run| self.kana_of(run).is_some())
+    }
+
+    /// English words verbatim; kana runs through the model, each with the
+    /// text before it as left context.
+    fn assemble_pieces(&mut self, pieces: &[Piece]) -> String {
+        let base = self.truncate_context_for_api();
+        let mut out = String::new();
+        for piece in pieces {
+            match piece {
+                Piece::English(w) => out.push_str(w),
+                Piece::Kana(run) => {
+                    let reading = self
+                        .kana_of(run)
+                        .unwrap_or_else(|| self.converters.romaji.convert_flush(run));
+                    let lctx = self.lctx_for(&base, &out);
+                    let converted = self.convert_chunk(&reading, &lctx);
+                    out.push_str(&converted);
+                }
+            }
+        }
+        out
+    }
+
+    /// The English-mixed reading of what was typed, for the Space
+    /// conversion, when the keystrokes are known and consistent with the
+    /// reading.
+    pub(super) fn english_mix_candidate(&mut self, reading: &str) -> Option<String> {
         if self.mode.current() != InputMode::Hiragana || self.raw_keys.is_empty() {
             return None;
         }
-        let romaji = &self.converters.romaji;
-        // Plain Japanese typing (ohayou, genkidesuka) must not sprout
-        // English readings; a lone English word (tokyo) may.
         let leftover = self.has_romaji_leftover("");
+        let raw = self.raw_keys.clone();
         // Edits around the keystrokes (cursor moves, mid-buffer inserts)
         // leave raw_keys stale; only trust it when it reproduces the reading.
-        if romaji.convert_flush(&self.raw_keys) != reading {
+        if self.converters.romaji.convert_flush(&raw) != reading {
             return None;
         }
-        let text = mix(&self.raw_keys, |run| {
-            let k = romaji.convert_flush(run);
-            (!k.is_empty() && k.chars().all(|c| !c.is_ascii())).then_some(k)
-        })?;
-        let whole_word = text.eq_ignore_ascii_case(&self.raw_keys) && text.len() >= 4;
-        ((leftover || whole_word) && text != reading).then_some(text)
+        // A lone English word (tokyo) is offered even when it reads as kana.
+        if raw.len() >= 4 && words().contains(raw.to_ascii_lowercase().as_str()) {
+            return (raw != reading).then_some(raw);
+        }
+        if !leftover {
+            return None;
+        }
+        let pieces = self.english_pieces(&raw)?;
+        let text = self.assemble_pieces(&pieces);
+        (text != reading).then_some(text)
     }
-}
 
-impl InputMethodEngine {
     /// Live conversion text with English words restored, for a model answer
     /// that still carries unresolved romaji (`ウィンドws`): the keystrokes
     /// before the pending tail, mixed. `None` when the answer is clean or
     /// the keystrokes do not make an English-mixed reading.
-    pub(super) fn live_english(&self, converted: &str) -> Option<String> {
+    pub(super) fn live_english(&mut self, converted: &str) -> Option<String> {
         if self.mode.current() != InputMode::Hiragana || self.raw_keys.is_empty() {
             return None;
         }
-        let romaji = &self.converters.romaji;
         let pending = self.input_buf.pending();
-        let tail = romaji.convert_flush(&pending);
+        let tail = self.converters.romaji.convert_flush(&pending);
         if !self.has_romaji_leftover(converted) {
             return None;
         }
+        let romaji = &self.converters.romaji;
         if romaji.convert_flush(&self.raw_keys) != self.input_buf.settled_reading(romaji) {
             return None;
         }
-        let kana = |run: &str| {
-            let k = romaji.convert_flush(run);
-            (!k.is_empty() && k.chars().all(|c| !c.is_ascii())).then_some(k)
-        };
         // The caller appends `tail` (the pending keystrokes as typed) after
         // this text, so the mixed text must end with it. A partial last
         // syllable (`windowsd`) is carried over verbatim.
-        let raw = &self.raw_keys;
+        let raw = self.raw_keys.clone();
         let n = raw.len();
-        let text = (0..=3.min(n))
+        let (pieces, rest) = (0..=3.min(n))
             .filter(|k| raw.is_char_boundary(n - k))
             .find_map(|k| {
                 let (head, rest) = raw.split_at(n - k);
-                (rest.chars().all(|c| c.is_ascii_alphabetic()))
-                    .then(|| mix(head, kana).map(|t| format!("{t}{rest}")))
-                    .flatten()
+                if !rest.chars().all(|c| c.is_ascii_alphabetic()) {
+                    return None;
+                }
+                self.english_pieces(head).map(|p| (p, rest.to_string()))
             })?;
+        let text = format!("{}{}", self.assemble_pieces(&pieces), rest);
         text.strip_suffix(tail.as_str()).map(str::to_string)
     }
 }
@@ -174,44 +241,52 @@ impl InputMethodEngine {
 mod tests {
     use super::*;
 
-    fn fake_kana(run: &str) -> Option<String> {
-        // enough romaji for the tests: de, ha, wo, ga, da
-        let table = [("de", "で"), ("ha", "は"), ("wo", "を"), ("ga", "が"), ("da", "だ")];
+    fn is_kana(run: &str) -> bool {
+        let table = [
+            "de", "ha", "wo", "ga", "da", "no", "ko", "he", "ni", "n", "u", "ho", "ka", "te",
+        ];
         let mut rest = run;
-        let mut out = String::new();
         'outer: while !rest.is_empty() {
-            for (r, k) in table {
+            for r in table {
                 if let Some(t) = rest.strip_prefix(r) {
-                    out.push_str(k);
                     rest = t;
                     continue 'outer;
                 }
             }
-            return None;
+            return false;
         }
-        Some(out)
+        !run.is_empty()
+    }
+
+    fn show(raw: &str) -> Option<String> {
+        split(raw, is_kana).map(|ps| {
+            ps.iter()
+                .map(|p| match p {
+                    Piece::English(w) => format!("[{w}]"),
+                    Piece::Kana(k) => format!("<{k}>"),
+                })
+                .collect()
+        })
     }
 
     #[test]
-    fn mixes_word_and_kana() {
-        assert_eq!(mix("windowsdeha", fake_kana).as_deref(), Some("windowsでは"));
-        assert_eq!(mix("goodda", fake_kana).as_deref(), Some("goodだ"));
+    fn splits_word_and_kana() {
+        assert_eq!(show("windowsdeha").as_deref(), Some("[windows]<deha>"));
+        assert_eq!(
+            show("konopcnowindowsdehenkan").as_deref(),
+            Some("<kono>[pc]<no>[windows]<dehenkan>")
+        );
     }
 
     #[test]
-    fn plain_japanese_is_left_alone() {
-        assert_eq!(mix("dehaga", fake_kana), None);
-        assert_eq!(mix("ab", fake_kana), None);
-    }
-
-    #[test]
-    fn too_little_english_is_left_alone() {
-        // "the" is a word but covers well under half of the keystrokes
-        assert_eq!(mix("thedehagadawo", fake_kana), None);
+    fn kana_readable_runs_stay_kana() {
+        // "ten" and "no" are English words but read as kana
+        assert_eq!(show("konotenno"), None);
+        assert_eq!(show("dehaga"), None);
     }
 
     #[test]
     fn keeps_typed_case() {
-        assert_eq!(mix("WindowsDeha", fake_kana).as_deref(), Some("Windowsでは"));
+        assert_eq!(show("WindowsDeha").as_deref(), Some("[Windows]<Deha>"));
     }
 }
