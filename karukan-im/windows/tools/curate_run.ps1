@@ -5,7 +5,7 @@ param(
     [string]$Data = (Join-Path (Split-Path $PSScriptRoot -Parent) 'data'),
     [string]$Python = 'C:\Users\yuu\AppData\Local\Python\pythoncore-3.14-64\python.exe',
     [string]$Server = 'D:\Projects\.tools\llama.cpp-b11223-cuda12\extract\llama-server.exe',
-    [string]$Model = 'D:\Projects\llm-experiments\model-comparison\models\gemma-4-26B-A4B-it-Q4_0.gguf',
+    [string]$Model = 'D:\Projects\llm-experiments\model-comparison\models\Huihui-gemma-4-26B-A4B-it-abliterated.i1-Q4_K_M.gguf',
     [int]$Port = 8081,
     [int]$Threads = 12,
     [int]$IdleMinutes = 10,
