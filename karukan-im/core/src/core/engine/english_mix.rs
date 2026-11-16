@@ -235,7 +235,9 @@ impl InputMethodEngine {
             .filter(|k| raw.is_char_boundary(n - k))
             .find_map(|k| {
                 let (head, rest) = raw.split_at(n - k);
-                if !rest.chars().all(|c| c.is_ascii_alphabetic()) {
+                // What is carried over verbatim must be the pending keystrokes
+                // themselves, never settled letters.
+                if !rest.chars().all(|c| c.is_ascii_alphabetic()) || !tail.ends_with(rest) {
                     return None;
                 }
                 let pieces = self.english_pieces(head)?;
