@@ -14,6 +14,7 @@ mod conversion;
 mod cursor;
 mod date;
 mod emoji;
+mod english_mix;
 mod function_keys;
 mod katakana;
 mod learning;

@@ -94,6 +94,20 @@ impl CandidateBuilder {
         self.candidates.push(ac);
     }
 
+    /// Insert right behind the first model answer (or at the end when the
+    /// model gave none), skipping duplicates.
+    fn push_after_first_model(&mut self, ac: AnnotatedCandidate) {
+        if !self.seen.insert(ac.text.clone()) {
+            return;
+        }
+        let at = self
+            .candidates
+            .iter()
+            .position(|c| c.source == CandidateSource::Model)
+            .map_or(self.candidates.len(), |i| i + 1);
+        self.candidates.insert(at, ac);
+    }
+
     fn is_empty(&self) -> bool {
         self.candidates.is_empty()
     }
@@ -376,6 +390,14 @@ impl InputMethodEngine {
             for text in candidates {
                 builder.push(AnnotatedCandidate::new(text, CandidateSource::Model));
             }
+        }
+        // English words typed as plain romaji (`windowsdeha` →
+        // `windowsでは`) ride right behind the model's first answer.
+        if let Some(text) = self.english_mix_candidate(reading) {
+            builder.push_after_first_model(
+                AnnotatedCandidate::new(text, CandidateSource::Rewriter)
+                    .with_description(Some("英単語混じり".to_string())),
+            );
         }
 
         // 4. Exact system dictionary matches

@@ -33,3 +33,7 @@ DLL と `karukan-imserver.exe` を同じフォルダに置きます。`portable.
 ## 登録
 
 管理者権限で `regsvr32 karukan_tsf.dll`(解除は `/u`)。64 ビットのアプリでのみ使えます。
+
+## 英単語混じり
+
+英単語をローマ字のまま打っても（`windowsdeha`）、変換候補の先頭付近に `windowsでは` が出ます。単語は同梱の頻出語リスト（`karukan-im/core/data/english_words.txt`）から、3 文字以上で、打鍵の半分以上が英語になる場合だけ採用します。

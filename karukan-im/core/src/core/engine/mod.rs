@@ -8,6 +8,7 @@ mod chunk;
 mod conversion;
 mod cursor;
 mod display;
+mod english_mix;
 mod filter;
 mod function_keys;
 mod guard;
