@@ -28,7 +28,7 @@ use crate::guids::{GUID_ATTR_CONVERTED, GUID_ATTR_INPUT};
 use crate::keymap::{self, KEYSYM_SPACE, KEYSYM_SUPER_R};
 
 const ENGINE_RETRY: Duration = Duration::from_secs(10);
-const STAMP_CHECK: Duration = Duration::from_secs(5);
+const STAMP_CHECK: Duration = Duration::from_secs(60);
 
 pub struct State {
     tid: u32,
@@ -66,8 +66,9 @@ impl State {
     fn engine(&mut self) -> Option<&mut EngineClient> {
         // The server reads the dictionaries once at start-up, so a long-lived app
         // (a browser) would never see a new dict.bin or the curate job's additions.
-        // Between compositions, swap in a fresh server when those files change; the
-        // old one saves its learning cache on the way out.
+        // Between compositions, swap in a fresh server when those files change (checked
+        // once a minute; they change a few times a day); the old one saves its learning
+        // cache on the way out.
         if self.engine.is_some()
             && !self.has_preedit
             && self.stamp_checked.elapsed() >= STAMP_CHECK
