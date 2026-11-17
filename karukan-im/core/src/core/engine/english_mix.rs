@@ -235,6 +235,27 @@ impl InputMethodEngine {
         (text != reading).then_some(text)
     }
 
+    /// The keys as typed (`kaigi` for かいぎ), offered at the tail of the
+    /// Space list like MS-IME's raw-input candidate. Only when the
+    /// keystrokes are known and reproduce the reading.
+    pub(super) fn typed_keys_candidate(&self, reading: &str) -> Option<String> {
+        if self.mode.current() != InputMode::Hiragana
+            || self.raw_keys.is_empty()
+            || !self.raw_keys.chars().all(|c| c.is_ascii_graphic())
+        {
+            return None;
+        }
+        if !self
+            .converters
+            .romaji
+            .convert_flush(&self.raw_keys)
+            .eq_ignore_ascii_case(reading)
+        {
+            return None;
+        }
+        (self.raw_keys != reading).then(|| self.raw_keys.clone())
+    }
+
     /// Live conversion text with English words restored, for a model answer
     /// that still carries unresolved romaji (`ウィンドws`): the keystrokes
     /// before the pending tail, mixed. `None` when the answer is clean or

@@ -33,7 +33,36 @@ fn plain_japanese_gets_no_mixed_candidate() {
     engine.converters.kanji = None;
     type_str(&mut engine, "kyouhatenkiga");
     let list = candidates_after_space(&mut engine);
-    assert!(list.iter().all(|t| t.chars().all(|c| !c.is_ascii_alphabetic())), "{list:?}");
+    // the typed keys themselves are the one ASCII candidate
+    assert!(
+        list.iter().all(|t| t == "kyouhatenkiga" || t.chars().all(|c| !c.is_ascii_alphabetic())),
+        "{list:?}"
+    );
+}
+
+#[test]
+fn typed_keys_sit_behind_the_kana_pair() {
+    let mut engine = InputMethodEngine::new();
+    engine.converters.kanji = None;
+    type_str(&mut engine, "kaigi");
+    let list = candidates_after_space(&mut engine);
+    let pos = |s: &str| list.iter().position(|t| t == s);
+    let (kata, typed) = (pos("カイギ"), pos("kaigi"));
+    assert!(typed.is_some(), "{list:?}");
+    assert!(kata < typed, "{list:?}");
+}
+
+#[test]
+fn typed_keys_are_not_offered_after_the_buffer_is_edited_around_them() {
+    // a cursor move leaves raw_keys stale; it is only trusted when it
+    // reproduces the reading
+    let mut engine = InputMethodEngine::new();
+    engine.converters.kanji = None;
+    type_str(&mut engine, "kaigi");
+    engine.process_key(&press_key(Keysym::LEFT));
+    type_str(&mut engine, "ka");
+    let list = candidates_after_space(&mut engine);
+    assert!(!list.iter().any(|t| t.starts_with("kai")), "{list:?}");
 }
 
 #[test]
@@ -46,7 +75,7 @@ fn valid_romaji_that_spells_english_words_is_not_hijacked() {
         type_str(&mut engine, typed);
         let list = candidates_after_space(&mut engine);
         assert!(
-            list.iter().all(|t| t.chars().all(|c| !c.is_ascii_alphabetic())),
+            list.iter().all(|t| t == typed || t.chars().all(|c| !c.is_ascii_alphabetic())),
             "{typed}: {list:?}"
         );
     }

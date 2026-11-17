@@ -444,6 +444,16 @@ impl InputMethodEngine {
                     .with_description(description),
             );
         }
+        // The keys as typed, last: a rewriter variant that is the same text
+        // (`<>1234`, `[半]記号`) keeps its own annotation.
+        if self.mode.current() != InputMode::Emoji {
+            if let Some(typed) = self.typed_keys_candidate(reading) {
+                builder.push(
+                    AnnotatedCandidate::new(typed, CandidateSource::Rewriter)
+                        .with_description(Some("入力".to_string())),
+                );
+            }
+        }
 
         // 8. Back-fill descriptions. Symbol names are Fallback-only —
         //    model/dict/learning candidates must not inherit labels like
