@@ -28,12 +28,15 @@ use crate::guids::{GUID_ATTR_CONVERTED, GUID_ATTR_INPUT};
 use crate::keymap::{self, KEYSYM_SPACE, KEYSYM_SUPER_R};
 
 const ENGINE_RETRY: Duration = Duration::from_secs(10);
+const STAMP_CHECK: Duration = Duration::from_secs(5);
 
 pub struct State {
     tid: u32,
     thread_mgr: Option<ITfThreadMgr>,
     engine: Option<EngineClient>,
     engine_failed: Option<Instant>,
+    engine_stamp: Option<std::time::SystemTime>,
+    stamp_checked: Instant,
     composition: Option<ITfComposition>,
     has_preedit: bool,
     open: bool,
@@ -49,6 +52,8 @@ impl State {
             thread_mgr: None,
             engine: None,
             engine_failed: None,
+            engine_stamp: None,
+            stamp_checked: Instant::now(),
             composition: None,
             has_preedit: false,
             open: true,
@@ -59,6 +64,19 @@ impl State {
     }
 
     fn engine(&mut self) -> Option<&mut EngineClient> {
+        // The server reads the dictionaries once at start-up, so a long-lived app
+        // (a browser) would never see a new dict.bin or the curate job's additions.
+        // Between compositions, swap in a fresh server when those files change; the
+        // old one saves its learning cache on the way out.
+        if self.engine.is_some()
+            && !self.has_preedit
+            && self.stamp_checked.elapsed() >= STAMP_CHECK
+        {
+            self.stamp_checked = Instant::now();
+            if data_stamp() != self.engine_stamp {
+                self.engine = None;
+            }
+        }
         let dead = match self.engine.as_mut() {
             Some(e) => !e.is_alive(),
             None => true,
@@ -70,9 +88,12 @@ impl State {
                     return None;
                 }
             }
+            let stamp = data_stamp();
             match spawn_engine() {
                 Some(e) => {
                     self.engine = Some(e);
+                    self.engine_stamp = stamp;
+                    self.stamp_checked = Instant::now();
                     self.engine_failed = None;
                 }
                 None => {
@@ -83,6 +104,27 @@ impl State {
         }
         self.engine.as_mut()
     }
+}
+
+/// Newest modification time among the files the server loads at start-up
+/// (portable layout only; elsewhere the data directory is not ours to watch).
+fn data_stamp() -> Option<std::time::SystemTime> {
+    let dir = crate::dll_dir()?;
+    if !dir.join("portable.flag").exists() {
+        return None;
+    }
+    let data = dir.join("data");
+    let mtime = |p: &std::path::Path| std::fs::metadata(p).and_then(|m| m.modified()).ok();
+    let mut newest = ["dict.bin", "user_english.txt"]
+        .iter()
+        .filter_map(|n| mtime(&data.join(n)))
+        .max();
+    if let Ok(rd) = std::fs::read_dir(data.join("user_dicts")) {
+        for f in rd.flatten() {
+            newest = newest.max(mtime(&f.path()));
+        }
+    }
+    newest
 }
 
 fn spawn_engine() -> Option<EngineClient> {
