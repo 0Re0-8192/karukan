@@ -37,6 +37,9 @@ pub struct State {
     engine_failed: Option<Instant>,
     engine_stamp: Option<std::time::SystemTime>,
     stamp_checked: Instant,
+    /// Keys typed into the current composition, shown beside the candidates.
+    typed: String,
+    aux: Option<String>,
     composition: Option<ITfComposition>,
     has_preedit: bool,
     open: bool,
@@ -54,6 +57,8 @@ impl State {
             engine_failed: None,
             engine_stamp: None,
             stamp_checked: Instant::now(),
+            typed: String::new(),
+            aux: None,
             composition: None,
             has_preedit: false,
             open: true,
@@ -298,11 +303,25 @@ fn apply_actions(
     sink: &ITfCompositionSink,
 ) -> Result<()> {
     // aux is folded in first so the window renders once per batch
-    for a in actions {
-        match a {
-            Action::UpdateAux { text } => cand::set_aux(Some(text.clone())),
-            Action::HideAux => cand::set_aux(None),
-            _ => {}
+    {
+        let mut st = state.borrow_mut();
+        let mut touched = false;
+        for a in actions {
+            match a {
+                Action::UpdateAux { text } => {
+                    st.aux = Some(text.clone());
+                    touched = true;
+                }
+                Action::HideAux => {
+                    st.aux = None;
+                    touched = true;
+                }
+                _ => {}
+            }
+        }
+        // Every batch with candidates re-folds, since the typed keys change per key.
+        if touched || actions.iter().any(|a| matches!(a, Action::ShowCandidates { .. })) {
+            cand::set_aux(footer_text(&st.typed, st.aux.as_deref()));
         }
     }
     for a in actions {
@@ -331,6 +350,36 @@ fn apply_actions(
         }
     }
     Ok(())
+}
+
+/// The keys typed so far (as typed, e.g. `kaigi`) ahead of the engine's own line.
+fn footer_text(typed: &str, aux: Option<&str>) -> Option<String> {
+    const KEEP: usize = 24;
+    let n = typed.chars().count();
+    let shown: String = if n > KEEP {
+        format!("…{}", typed.chars().skip(n - KEEP).collect::<String>())
+    } else {
+        typed.to_string()
+    };
+    match (shown.is_empty(), aux) {
+        (true, a) => a.map(str::to_string),
+        (false, Some(a)) => Some(format!("{shown} │ {a}")),
+        (false, None) => Some(shown),
+    }
+}
+
+/// Keep the record of typed keys in step with the key just sent to the engine.
+fn track_typed(typed: &mut String, keysym: u32, mods: Mods) {
+    if mods.control || mods.alt {
+        return;
+    }
+    match keysym {
+        0xFF08 => {
+            typed.pop();
+        }
+        0x21..=0x7E => typed.push(keysym as u8 as char),
+        _ => {}
+    }
 }
 
 fn text_anchor(state: &Rc<RefCell<State>>, ec: u32, ctx: &ITfContext) -> Option<Anchor> {
@@ -473,6 +522,8 @@ impl TextService_Impl {
         let (res, ctx) = {
             let mut st = self.state.borrow_mut();
             let ctx = st.context.clone();
+            st.typed.clear();
+            st.aux = None;
             let res = st.engine().and_then(|e| e.commit());
             (res, ctx)
         };
@@ -553,6 +604,19 @@ impl TextService_Impl {
             return false;
         };
         let consumed = result.consumed;
+        // a commit or an emptied preedit ends the composition: the next word starts afresh
+        let ends = result.actions.iter().any(|a| {
+            matches!(a, Action::Commit { .. }) || matches!(a, Action::UpdatePreedit { text, .. } if text.is_empty())
+        });
+        {
+            let mut st = self.state.borrow_mut();
+            if ends {
+                st.typed.clear();
+                st.aux = None;
+            } else if consumed {
+                track_typed(&mut st.typed, keysym, mods);
+            }
+        }
         request_session(&self.state, ctx, result.actions, &self.sink(), true);
         consumed
     }
@@ -654,6 +718,8 @@ impl ITfCompositionSink_Impl for TextService_Impl {
         let mut st = self.state.borrow_mut();
         st.composition = None;
         st.has_preedit = false;
+        st.typed.clear();
+        st.aux = None;
         if let Some(e) = st.engine.as_mut() {
             e.reset();
         }
@@ -674,3 +740,33 @@ impl ITfDisplayAttributeProvider_Impl for TextService_Impl {
 
 #[allow(dead_code)]
 fn _types(_: PathBuf, _: CoreBool, _: Option<ITfTextInputProcessor>) {}
+
+#[cfg(test)]
+mod typed_tests {
+    use super::*;
+
+    #[test]
+    fn typed_keys_follow_input() {
+        let m = Mods::default();
+        let mut t = String::new();
+        for c in "kaigi".chars() {
+            track_typed(&mut t, c as u32, m);
+        }
+        assert_eq!(t, "kaigi");
+        track_typed(&mut t, 0xFF08, m);
+        assert_eq!(t, "kaig");
+        track_typed(&mut t, 0xFF0D, m); // Enter is not a typed key
+        track_typed(&mut t, 'x' as u32, Mods { control: true, ..m });
+        assert_eq!(t, "kaig");
+    }
+
+    #[test]
+    fn footer_joins_typed_and_aux() {
+        assert_eq!(footer_text("", Some("a")), Some("a".into()));
+        assert_eq!(footer_text("kaigi", Some("a")), Some("kaigi │ a".into()));
+        assert_eq!(footer_text("kaigi", None), Some("kaigi".into()));
+        assert_eq!(footer_text("", None), None);
+        let long = "a".repeat(40);
+        assert_eq!(footer_text(&long, None).unwrap().chars().count(), 25);
+    }
+}
