@@ -13,7 +13,11 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $root = Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) '..\..\..'
-if (-not $Source) { $Source = Join-Path $root 'target\release' }
+# build.ps1 puts its output outside the repo; fall back to the repo's own target
+if (-not $Source) {
+    $Source = 'D:\cargo-target\karukan\release'
+    if (-not (Test-Path $Source)) { $Source = Join-Path $root 'target\release' }
+}
 if (-not $Dest)   { $Dest   = Join-Path $root 'dist' }
 
 $Clsid   = '{4B9F6E5A-1D3C-4C7E-9A52-8E21F0C7A311}'

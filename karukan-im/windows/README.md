@@ -24,11 +24,10 @@ MS-IME に合わせています。
 ## ビルド
 
 ```powershell
-cargo build --release -p karukan-im --bin karukan-imserver
-cargo build --release -p karukan-tsf
+.\karukan-im\windows	oolsuild.ps1
 ```
 
-`rust-version` が足りないエラーが出たら、新しい toolchain を指定します(`cargo +1.96.0 build ...`)。
+`karukan-imserver.exe` と `karukan_tsf.dll` を `D:\cargo-target\karukanelease` に作ります(`-Clean` で llama.cpp も作り直し)。出力先をリポジトリの外にしているのは、`<repo>	arget` の下だと、ビルドスクリプトが一時ファイルを作れず `lib.exe` / MSBuild が失敗するためです。llama.cpp は Ninja で作り、`rust-version` が足りなければ `cargo +1.96.0` を使います。
 
 ## インストール・更新
 
@@ -36,7 +35,7 @@ cargo build --release -p karukan-tsf
 .\karukan-im\windows	ools\install.ps1
 ```
 
-`targetelease` の DLL とサーバーを `dist` へ置き(動作中のものは名前を変えて退避)、`portable.flag` を作り、システム辞書 `data\dict.bin` が無ければ取得し、DLL を登録(管理者権限)して、現在のユーザーで有効にします。解除は `-Uninstall`。置き場は `-Dest`、辞書を取らないなら `-SkipDict`。
+ビルド出力の DLL とサーバーを `dist` へ置き(動作中のものは名前を変えて退避)、`portable.flag` を作り、システム辞書 `data\dict.bin` が無ければ取得し、DLL を登録(管理者権限)して、現在のユーザーで有効にします。解除は `-Uninstall`。置き場は `-Dest`、辞書を取らないなら `-SkipDict`。
 `portable.flag` があると、設定・学習・モデルをそのフォルダ内(`data`・`config`・`hf`)に保存します。更新した DLL は、アプリを開き直すと読み込まれます。64 ビットのアプリでのみ使えます。
 
 テスト: `KARUKAN_TSF_DEBUG=1 KARUKAN_IMSERVER=<karukan-imserver.exe> cargo test --release -p karukan-tsf --test tsf_e2e -- --nocapture`
