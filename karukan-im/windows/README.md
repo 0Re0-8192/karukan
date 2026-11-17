@@ -27,7 +27,7 @@ MS-IME に合わせています。
 .\karukan-im\windows	oolsuild.ps1
 ```
 
-`karukan-imserver.exe` と `karukan_tsf.dll` を `D:\cargo-target\karukanelease` に作ります(`-Clean` で llama.cpp も作り直し)。出力先をリポジトリの外にしているのは、`<repo>	arget` の下だと、ビルドスクリプトが一時ファイルを作れず `lib.exe` / MSBuild が失敗するためです。llama.cpp は Ninja で作り、`rust-version` が足りなければ `cargo +1.96.0` を使います。
+`karukan-imserver.exe` と `karukan_tsf.dll` を `D:\cargo-target\karukan\release` に作ります(`-Clean` で llama.cpp も作り直し)。出力先をリポジトリの外にしているのは、`<repo>\target` の下だと、ビルドスクリプトが一時ファイルを作れず `lib.exe` / MSBuild が失敗するためです。llama.cpp は Ninja で作り、`rust-version` が足りなければ `cargo +1.96.0` を使います。
 
 ## インストール・更新
 
