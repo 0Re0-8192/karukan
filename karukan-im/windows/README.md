@@ -24,7 +24,7 @@ MS-IME に合わせています。
 ## ビルド
 
 ```powershell
-.\karukan-im\windows	oolsuild.ps1
+.\karukan-im\windows\tools\build.ps1
 ```
 
 `karukan-imserver.exe` と `karukan_tsf.dll` を `D:\cargo-target\karukan\release` に作ります(`-Clean` で llama.cpp も作り直し)。出力先をリポジトリの外にしているのは、`<repo>\target` の下だと、ビルドスクリプトが一時ファイルを作れず `lib.exe` / MSBuild が失敗するためです。llama.cpp は Ninja で作り、`rust-version` が足りなければ `cargo +1.96.0` を使います。
@@ -32,7 +32,7 @@ MS-IME に合わせています。
 ## インストール・更新
 
 ```powershell
-.\karukan-im\windows	ools\install.ps1
+.\karukan-im\windows\tools\install.ps1
 ```
 
 ビルド出力の DLL とサーバーを `dist` へ置き(動作中のものは名前を変えて退避)、`portable.flag` を作り、システム辞書 `data\dict.bin` が無ければ取得し、DLL を登録(管理者権限)して、現在のユーザーで有効にします。解除は `-Uninstall`。置き場は `-Dest`、辞書を取らないなら `-SkipDict`。
