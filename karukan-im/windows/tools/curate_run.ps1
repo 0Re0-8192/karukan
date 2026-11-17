@@ -75,7 +75,17 @@ try {
         Log ("server up after {0:N0}s" -f ((Get-Date) - $t0).TotalSeconds)
     }
     $extra = if ($NoWeb) { @('--no-web') } else { @() }
-    $out = & $Python -I -X utf8 $script --data $Data --url "http://127.0.0.1:$Port" @extra 2>&1
+    # bounded by RunSeconds: a hung model server would otherwise hold ~14 GB until the
+    # task's own limit kills this script, and the finally below would never run
+    $outFile = Join-Path $tmp 'curate.out'
+    $py = Start-Process -FilePath $Python -PassThru -WindowStyle Hidden `
+        -ArgumentList (@('-I', '-X', 'utf8', "`"$script`"", '--data', "`"$Data`"", '--url', "http://127.0.0.1:$Port") + $extra) `
+        -RedirectStandardOutput $outFile -RedirectStandardError (Join-Path $tmp 'curate.err')
+    if (-not $py.WaitForExit($RunSeconds * 1000)) {
+        & taskkill.exe /PID $py.Id /T /F | Out-Null
+        Log "curate: stopped after ${RunSeconds}s (progress up to the last finished batch is kept)"
+    }
+    $out = if (Test-Path $outFile) { Get-Content $outFile -Encoding utf8 } else { @() }
     Log ("curate: " + (($out | Out-String).Trim() -replace "`r?`n", ' | '))
 }
 catch {

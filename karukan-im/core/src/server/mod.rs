@@ -168,6 +168,7 @@ impl ImServer {
             actions,
             conversion_ms: self.engine.last_conversion_ms(),
             process_key_ms: self.engine.last_process_key_ms(),
+            typed: self.engine.typed_keys(),
         })
         .map_err(internal_error)
     }

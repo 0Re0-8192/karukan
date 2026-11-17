@@ -256,6 +256,27 @@ impl InputMethodEngine {
         (self.raw_keys != reading).then(|| self.raw_keys.clone())
     }
 
+    /// The keystrokes of the current composition as typed, for a frontend to
+    /// show beside the candidates. Empty when unknown, or when edits around
+    /// them (cursor moves, mid-buffer inserts) mean they no longer spell the
+    /// composition. Keeps following Backspace-out-of-conversion and the like,
+    /// which a frontend counting keys itself cannot see.
+    pub fn typed_keys(&self) -> String {
+        if self.raw_keys.is_empty() || !self.raw_keys.chars().all(|c| c.is_ascii_graphic()) {
+            return String::new();
+        }
+        if self.mode.current() == InputMode::Hiragana {
+            let romaji = &self.converters.romaji;
+            if !romaji
+                .convert_flush(&self.raw_keys)
+                .eq_ignore_ascii_case(&self.input_buf.settled_reading(romaji))
+            {
+                return String::new();
+            }
+        }
+        self.raw_keys.clone()
+    }
+
     /// Live conversion text with English words restored, for a model answer
     /// that still carries unresolved romaji (`ウィンドws`): the keystrokes
     /// before the pending tail, mixed. `None` when the answer is clean or

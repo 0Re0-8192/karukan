@@ -129,7 +129,8 @@ impl IEnumTfDisplayAttributeInfo_Impl for EnumAttr_Impl {
             } else {
                 AttrInfo::converted()
             };
-            unsafe { *rginfo.add(fetched as usize) = Some(info) };
+            // the caller's array is uninitialised: write, never assign (which would drop garbage)
+            unsafe { rginfo.add(fetched as usize).write(Some(info)) };
             self.pos.set(self.pos.get() + 1);
             fetched += 1;
         }

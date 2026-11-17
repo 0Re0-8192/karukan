@@ -68,6 +68,9 @@ pub struct KeyResult {
     pub consumed: bool,
     #[serde(default)]
     pub actions: Vec<Action>,
+    /// The composition's keys as typed (`kaigi`); empty when the engine does not know.
+    #[serde(default)]
+    pub typed: String,
 }
 
 pub struct EngineClient {
@@ -75,6 +78,9 @@ pub struct EngineClient {
     stdin: Option<ChildStdin>,
     rx: Receiver<String>,
     next_id: u64,
+    /// A call ran out of time: the server is wedged, and asking it again would
+    /// freeze the host application for another `CALL_TIMEOUT` on every key.
+    stuck: bool,
 }
 
 impl EngineClient {
@@ -116,11 +122,14 @@ impl EngineClient {
             stdin,
             rx,
             next_id: 0,
+            stuck: false,
         })
     }
 
+    /// Running and answering: a server that timed out counts as dead, so the
+    /// caller replaces it instead of waiting on it again.
     pub fn is_alive(&mut self) -> bool {
-        matches!(self.child.try_wait(), Ok(None))
+        !self.stuck && matches!(self.child.try_wait(), Ok(None))
     }
 
     fn send(&mut self, method: &str, params: Value, want_reply: bool) -> Option<Value> {
@@ -150,9 +159,11 @@ impl EngineClient {
                         return v.get("result").cloned();
                     }
                 }
-                Err(RecvTimeoutError::Timeout) | Err(RecvTimeoutError::Disconnected) => {
+                Err(RecvTimeoutError::Timeout) => {
+                    self.stuck = true;
                     return None;
                 }
+                Err(RecvTimeoutError::Disconnected) => return None,
             }
         }
     }
@@ -213,6 +224,19 @@ impl Drop for EngineClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `sort` reads its input to the end and answers nothing: a wedged server.
+    #[test]
+    #[cfg(windows)]
+    fn a_wedged_server_is_given_up_after_one_timeout() {
+        let mut e = EngineClient::spawn(Path::new("sort.exe"), &[]).unwrap();
+        assert!(e.is_alive());
+        let t = Instant::now();
+        assert!(e.process_key(0x61, Mods::default()).is_none());
+        assert!(t.elapsed() >= CALL_TIMEOUT);
+        // the next key must not wait again: the caller sees a dead server and replaces it
+        assert!(!e.is_alive());
+    }
 
     #[test]
     fn parse_actions() {

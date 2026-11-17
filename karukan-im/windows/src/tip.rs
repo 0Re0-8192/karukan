@@ -368,20 +368,6 @@ fn footer_text(typed: &str, aux: Option<&str>) -> Option<String> {
     }
 }
 
-/// Keep the record of typed keys in step with the key just sent to the engine.
-fn track_typed(typed: &mut String, keysym: u32, mods: Mods) {
-    if mods.control || mods.alt {
-        return;
-    }
-    match keysym {
-        0xFF08 => {
-            typed.pop();
-        }
-        0x21..=0x7E => typed.push(keysym as u8 as char),
-        _ => {}
-    }
-}
-
 fn text_anchor(state: &Rc<RefCell<State>>, ec: u32, ctx: &ITfContext) -> Option<Anchor> {
     let comp = state.borrow().composition.clone()?;
     unsafe {
@@ -524,7 +510,14 @@ impl TextService_Impl {
             let ctx = st.context.clone();
             st.typed.clear();
             st.aux = None;
-            let res = st.engine().and_then(|e| e.commit());
+            // Never start a server just to commit nothing: an app that merely
+            // gained and lost focus has none, and starting one costs ~650 MB and a
+            // second on the UI thread.
+            let res = st
+                .engine
+                .as_mut()
+                .and_then(|e| e.is_alive().then_some(e))
+                .and_then(|e| e.commit());
             (res, ctx)
         };
         if let (Some(res), Some(ctx)) = (res, ctx) {
@@ -613,8 +606,10 @@ impl TextService_Impl {
             if ends {
                 st.typed.clear();
                 st.aux = None;
-            } else if consumed {
-                track_typed(&mut st.typed, keysym, mods);
+            } else {
+                // the engine knows what the keys were (it sees Backspace out of a
+                // conversion, cursor moves, mid-word inserts); a count kept here would not
+                st.typed = result.typed.clone();
             }
         }
         request_session(&self.state, ctx, result.actions, &self.sink(), true);
@@ -744,21 +739,6 @@ fn _types(_: PathBuf, _: CoreBool, _: Option<ITfTextInputProcessor>) {}
 #[cfg(test)]
 mod typed_tests {
     use super::*;
-
-    #[test]
-    fn typed_keys_follow_input() {
-        let m = Mods::default();
-        let mut t = String::new();
-        for c in "kaigi".chars() {
-            track_typed(&mut t, c as u32, m);
-        }
-        assert_eq!(t, "kaigi");
-        track_typed(&mut t, 0xFF08, m);
-        assert_eq!(t, "kaig");
-        track_typed(&mut t, 0xFF0D, m); // Enter is not a typed key
-        track_typed(&mut t, 'x' as u32, Mods { control: true, ..m });
-        assert_eq!(t, "kaig");
-    }
 
     #[test]
     fn footer_joins_typed_and_aux() {

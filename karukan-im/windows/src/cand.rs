@@ -534,6 +534,10 @@ fn place_log(anchor: &Option<Anchor>, x: i32, y: i32, w: i32, h: i32, dpi: u32) 
     if !dir.join("debug.flag").exists() {
         return;
     }
+    // a flag left on must not grow the log without bound
+    if std::fs::metadata(dir.join("debug.log")).is_ok_and(|m| m.len() > 1_000_000) {
+        return;
+    }
     let Ok(mut f) = std::fs::OpenOptions::new()
         .create(true)
         .append(true)

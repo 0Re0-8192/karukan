@@ -241,16 +241,16 @@ def main():
             pass
 
     worked = False
-    for _ in range(max(1, a.batches)):
+    # a dry run has no batch limit: it must find a record worth a model run wherever it is
+    for _ in range(10**6 if a.dry_run else max(1, a.batches)):
         rows, newest, freq = read_new(log, since)
         if newest == since:
             break
         if not rows:  # everything in the batch was filtered out: still counts as read
-            if a.dry_run:
-                break
             since = newest
-            with open(state, "w") as f:
-                f.write(str(since))
+            if not a.dry_run:  # a dry run reads on without recording it
+                with open(state, "w") as f:
+                    f.write(str(since))
             continue
 
         prompt = PROMPT + "\n".join(

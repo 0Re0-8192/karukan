@@ -140,6 +140,10 @@ pub struct KeyResult {
     pub conversion_ms: u64,
     /// End-to-end engine processing time for this request in milliseconds.
     pub process_key_ms: u64,
+    /// The keys of the current composition as typed (`kaigi`); empty when
+    /// unknown. Frontends may show it beside the candidates; the macOS one
+    /// ignores it.
+    pub typed: String,
 }
 
 #[derive(Debug, Serialize)]

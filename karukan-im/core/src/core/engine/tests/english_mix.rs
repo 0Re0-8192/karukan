@@ -66,6 +66,33 @@ fn typed_keys_are_not_offered_after_the_buffer_is_edited_around_them() {
 }
 
 #[test]
+fn typed_keys_survive_backing_out_of_conversion() {
+    // a frontend counting keys would pop one letter here: Backspace in the
+    // candidate list only cancels the conversion
+    let mut engine = InputMethodEngine::new();
+    engine.converters.kanji = None;
+    type_str(&mut engine, "kaigi");
+    assert_eq!(engine.typed_keys(), "kaigi");
+    engine.process_key(&press(' '));
+    assert_eq!(engine.typed_keys(), "kaigi");
+    engine.process_key(&press_key(Keysym::BACKSPACE));
+    assert_eq!(engine.preedit().unwrap().text(), "かいぎ");
+    assert_eq!(engine.typed_keys(), "kaigi");
+}
+
+#[test]
+fn typed_keys_are_dropped_once_edits_leave_them_stale() {
+    let mut engine = InputMethodEngine::new();
+    engine.converters.kanji = None;
+    type_str(&mut engine, "kaigi");
+    engine.process_key(&press_key(Keysym::LEFT));
+    type_str(&mut engine, "x");
+    assert_eq!(engine.typed_keys(), "");
+    engine.process_key(&press_key(Keysym::ESCAPE));
+    assert_eq!(engine.typed_keys(), "");
+}
+
+#[test]
 fn valid_romaji_that_spells_english_words_is_not_hijacked() {
     // ohayou / genkidesuka contain English words (you, gen…) but are
     // perfectly good kana typing.

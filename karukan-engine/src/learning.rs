@@ -62,6 +62,9 @@ pub struct LearningCache {
     max_entries: usize,
     max_surface_chars: usize,
     dirty: bool,
+    /// (reading, surface) pairs removed since the last save, so merging the
+    /// file's entries in on save does not bring them back.
+    removed: HashSet<(String, String)>,
 }
 
 impl LearningCache {
@@ -72,6 +75,7 @@ impl LearningCache {
             max_entries: config.max_entries,
             max_surface_chars: config.max_surface_chars,
             dirty: false,
+            removed: HashSet::new(),
         }
     }
 
@@ -84,6 +88,8 @@ impl LearningCache {
             return;
         }
         let now = now_unix();
+        self.removed
+            .remove(&(reading.to_string(), surface.to_string()));
         let entries = self.entries.entry(reading.to_string()).or_default();
 
         if let Some(entry) = entries.iter_mut().find(|e| e.surface == surface) {
@@ -107,13 +113,17 @@ impl LearningCache {
     /// at the next `save`.
     pub fn remove_suggestion(&mut self, reading: &str, surface: &str) -> bool {
         let mut removed = false;
+        let gone = &mut self.removed;
         self.entries.retain(|r, entries| {
             if !r.starts_with(reading) {
                 return true;
             }
             let before = entries.len();
             entries.retain(|e| e.surface != surface);
-            removed |= entries.len() != before;
+            if entries.len() != before {
+                removed = true;
+                gone.insert((r.clone(), surface.to_string()));
+            }
             !entries.is_empty()
         });
         if removed {
@@ -217,14 +227,23 @@ impl LearningCache {
     }
 
     /// Save the cache to a TSV file, evicting low-score entries if over capacity.
+    ///
+    /// Several processes may share the file (one server per application): what
+    /// the file holds is merged in first, so entries another process saved
+    /// since this one loaded survive, and the file is replaced atomically so a
+    /// crash mid-write cannot leave it truncated.
     pub fn save(&mut self, path: &Path) -> anyhow::Result<()> {
+        self.merge_from_disk(path);
         self.evict();
 
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
 
-        let file = std::fs::File::create(path)?;
+        let mut tmp_name = path.file_name().unwrap_or_default().to_os_string();
+        tmp_name.push(format!(".{}.tmp", std::process::id()));
+        let tmp = path.with_file_name(tmp_name);
+        let file = std::fs::File::create(&tmp)?;
         let mut writer = std::io::BufWriter::new(file);
         writeln!(writer, "# karukan learning cache v1")?;
 
@@ -245,8 +264,52 @@ impl LearningCache {
         }
 
         writer.flush()?;
+        drop(writer);
+        // A reader (another server starting up) can hold the file for a moment, which
+        // fails the replace on Windows: retry, then overwrite in place as a last resort.
+        let mut replaced = false;
+        for _ in 0..5 {
+            if std::fs::rename(&tmp, path).is_ok() {
+                replaced = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        if !replaced {
+            let copied = std::fs::copy(&tmp, path);
+            let _ = std::fs::remove_file(&tmp);
+            copied?;
+        }
+        self.removed.clear();
         self.dirty = false;
         Ok(())
+    }
+
+    /// Take in the entries of the file at `path` that this cache lacks (and the
+    /// larger count / later access of those it has), except the ones removed here.
+    fn merge_from_disk(&mut self, path: &Path) {
+        let config = LearningConfig {
+            max_entries: self.max_entries,
+            max_surface_chars: self.max_surface_chars,
+        };
+        let Ok(disk) = Self::load(path, config) else {
+            return;
+        };
+        for (reading, theirs) in disk.entries {
+            for t in theirs {
+                if self.removed.contains(&(reading.clone(), t.surface.clone())) {
+                    continue;
+                }
+                let mine = self.entries.entry(reading.clone()).or_default();
+                match mine.iter_mut().find(|e| e.surface == t.surface) {
+                    Some(e) => {
+                        e.frequency = e.frequency.max(t.frequency);
+                        e.last_access = e.last_access.max(t.last_access);
+                    }
+                    None => mine.push(t),
+                }
+            }
+        }
     }
 
     /// Whether there are unsaved changes.
@@ -420,6 +483,40 @@ mod tests {
         let results = loaded.lookup("きょう");
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].0, "今日"); // frequency 2
+    }
+
+    #[test]
+    fn save_keeps_what_another_process_saved_meanwhile() {
+        // two servers load the same (empty) file; each learns something else
+        let file = NamedTempFile::new().unwrap();
+        let path = file.path().to_path_buf();
+        let mut a = LearningCache::load(&path, config_with(100)).unwrap();
+        let mut b = LearningCache::load(&path, config_with(100)).unwrap();
+        b.record("きょう", "経");
+        b.save(&path).unwrap();
+        a.record("あす", "明日");
+        a.save(&path).unwrap(); // used to replace the file with a's view alone
+
+        let merged = LearningCache::load(&path, config_with(100)).unwrap();
+        assert_eq!(merged.entry_count(), 2);
+        assert_eq!(merged.lookup("きょう")[0].0, "経");
+        // and a itself carries b's entry from now on
+        assert_eq!(a.entry_count(), 2);
+    }
+
+    #[test]
+    fn save_does_not_bring_back_a_removed_entry() {
+        let file = NamedTempFile::new().unwrap();
+        let path = file.path().to_path_buf();
+        let mut a = LearningCache::load(&path, config_with(100)).unwrap();
+        a.record("きょう", "経");
+        a.record("あす", "明日");
+        a.save(&path).unwrap();
+        assert!(a.remove_suggestion("きょう", "経"));
+        a.save(&path).unwrap(); // the file still has it when this save merges
+        let loaded = LearningCache::load(&path, config_with(100)).unwrap();
+        assert_eq!(loaded.entry_count(), 1);
+        assert!(loaded.lookup("きょう").is_empty());
     }
 
     #[test]
