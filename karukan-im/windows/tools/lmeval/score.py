@@ -4,7 +4,8 @@ wrong ones. Accuracy = share of items where the right one scores highest.
 
   python -I score.py MODEL_DIR_OR_HF_ID [--set ctxset.jsonl] [--device cuda|cpu] [--out res.json]
 
-Needs torch + transformers (install into a venv on D:, never on C:)."""
+Needs torch + transformers: D:Projects.venv-lmeval (run it with `python -I`; redirect output to a file,
+not into Select-Object -First, which kills the pipe). Random model scores ~50%."""
 import argparse, json, pathlib, sys, time
 
 ap = argparse.ArgumentParser()
