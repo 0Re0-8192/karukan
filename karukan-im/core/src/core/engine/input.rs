@@ -39,8 +39,21 @@ impl InputMethodEngine {
                 || karukan_engine::contains_kana(&full_reading));
         let candidates = if convert {
             let reading = full_reading.clone();
-            self.chunked_auto_suggest().map(|converted| {
+            // The model leaving the reading as it is (`ごおgぇ。こm`) is "no suggestion",
+            // but English words in it can still be restored (`google.com`).
+            let suggestion = self.chunked_auto_suggest();
+            let unchanged = suggestion.is_none();
+            let converted = suggestion.or_else(|| {
+                full_reading
+                    .chars()
+                    .any(|c| c.is_ascii_alphabetic())
+                    .then(|| full_reading.clone())
+            });
+            converted.and_then(|converted| {
                 self.english_live = self.live_english(&converted);
+                if unchanged && self.english_live.is_none() {
+                    return None;
+                }
                 // The window lists the whole line, pending keystrokes
                 // included (the preedit appends them after the live text).
                 let converted = match &self.english_live {
@@ -50,7 +63,7 @@ impl InputMethodEngine {
                     }
                     None => converted,
                 };
-                (vec![converted], reading)
+                Some((vec![converted], reading))
             })
         } else {
             self.chunks.clear();

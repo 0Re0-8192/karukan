@@ -55,6 +55,53 @@ pub(super) enum Piece {
     Kana(String),
 }
 
+/// Top-level domains that mark `a.b` as a host name (`example.com`).
+const LONG_TLDS: [&str; 9] = ["com", "net", "org", "dev", "app", "info", "biz", "edu", "gov"];
+/// Two-letter ones: also ordinary kana typing (`asu.ne` is あす。ね), so a host
+/// name needs a label before them that cannot be kana (`example.jp`).
+const SHORT_TLDS: [&str; 12] = [
+    "jp", "io", "ai", "co", "tv", "us", "uk", "de", "fr", "cn", "kr", "me",
+];
+
+/// Byte ranges of `raw` that are host names: letters joined by single dots,
+/// ending in a known top-level domain. `kana` says whether a run of keys
+/// reads as kana on its own. A trailing dot or a half-typed domain
+/// (`example.j`) is not one yet, so the word flips to English when the
+/// domain is complete.
+pub(super) fn host_names(raw: &str, kana: &impl Fn(&str) -> bool) -> Vec<(usize, usize)> {
+    let bytes = raw.as_bytes();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        if !bytes[i].is_ascii_alphabetic() {
+            i += 1;
+            continue;
+        }
+        // a run of letters and dots, ending on a letter
+        let start = i;
+        while i < bytes.len() && (bytes[i].is_ascii_alphabetic() || bytes[i] == b'.') {
+            i += 1;
+        }
+        let mut end = i;
+        while end > start && bytes[end - 1] == b'.' {
+            end -= 1;
+        }
+        let run = raw[start..end].to_ascii_lowercase();
+        let labels: Vec<&str> = run.split('.').collect();
+        if labels.len() < 2 || labels.iter().any(|l| l.is_empty()) {
+            continue;
+        }
+        let tld = labels[labels.len() - 1];
+        let before = &labels[..labels.len() - 1];
+        let host = LONG_TLDS.contains(&tld)
+            || (SHORT_TLDS.contains(&tld) && before.iter().any(|l| !kana(l)));
+        if host {
+            out.push((start, end));
+        }
+    }
+    out
+}
+
 /// Best split of `raw` (ASCII letters) into pieces, or `None` when it has no
 /// English word or does not split at all. `kana` says whether a run of
 /// keystrokes is complete kana on its own.
@@ -171,13 +218,44 @@ impl InputMethodEngine {
         (!k.is_empty() && k.chars().all(|c| !c.is_ascii())).then_some(k)
     }
 
-    /// Pieces for the keystrokes in `raw` (see [`split`]).
+    /// Pieces for the keystrokes in `raw` (see [`split`]); host names such as
+    /// `example.jp` are carried whole, dots included (a `.` would otherwise
+    /// settle into `。` and cut the word in two).
     fn english_pieces(&self, raw: &str) -> Option<Vec<Piece>> {
-        split(
-            raw,
-            |run| self.kana_of(run).is_some(),
-            |w| self.corrections.is_known(w),
-        )
+        let kana = |run: &str| self.kana_of(run).is_some();
+        let learned = |w: &str| self.corrections.is_known(w);
+        let hosts = host_names(raw, &kana);
+        if hosts.is_empty() {
+            return split(raw, kana, learned);
+        }
+        let mut pieces: Vec<Piece> = Vec::new();
+        let mut at = 0;
+        let push_gap = |gap: &str, pieces: &mut Vec<Piece>| -> Option<()> {
+            if gap.is_empty() {
+                return Some(());
+            }
+            match split(gap, kana, learned) {
+                Some(ps) => pieces.extend(ps),
+                None if kana(gap) => pieces.push(Piece::Kana(gap.to_string())),
+                None => return None,
+            }
+            Some(())
+        };
+        for (s, e) in hosts {
+            push_gap(&raw[at..s], &mut pieces)?;
+            pieces.push(Piece::English(raw[s..e].to_string()));
+            at = e;
+        }
+        push_gap(&raw[at..], &mut pieces)?;
+        // neighbouring kana runs are one run, as `split` leaves them
+        let mut merged: Vec<Piece> = Vec::new();
+        for p in pieces {
+            match (merged.last_mut(), p) {
+                (Some(Piece::Kana(a)), Piece::Kana(b)) => a.push_str(&b),
+                (_, p) => merged.push(p),
+            }
+        }
+        Some(merged)
     }
 
     /// English words verbatim; kana runs through the model, each with the

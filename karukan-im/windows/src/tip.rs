@@ -157,7 +157,35 @@ fn spawn_engine() -> Option<EngineClient> {
 
 /// A panic must never unwind into the host application.
 fn guard<T>(default: T, f: impl FnOnce() -> T) -> T {
-    std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).unwrap_or(default)
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
+        Ok(v) => v,
+        Err(_) => {
+            diag("panic caught");
+            default
+        }
+    }
+}
+
+/// Why a key was lost, written to `debug.log` beside the DLL while a
+/// `debug.flag` file exists there (and the log is under 1 MB).
+fn diag(msg: &str) {
+    use std::io::Write;
+    let Some(dir) = crate::dll_dir() else { return };
+    if !dir.join("debug.flag").exists() {
+        return;
+    }
+    let log = dir.join("debug.log");
+    if std::fs::metadata(&log).is_ok_and(|m| m.len() > 1_000_000) {
+        return;
+    }
+    let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(log) else {
+        return;
+    };
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let _ = writeln!(f, "t={secs} pid={} diag: {msg}", std::process::id());
 }
 
 fn dbg_log(msg: &str) {
@@ -208,9 +236,13 @@ struct ApplySession {
 
 impl ITfEditSession_Impl for ApplySession_Impl {
     fn DoEditSession(&self, ec: u32) -> Result<()> {
-        guard(Err(E_FAIL.into()), || {
+        let r = guard(Err(E_FAIL.into()), || {
             apply_actions(&self.state, ec, &self.ctx, &self.actions, &self.sink)
-        })
+        });
+        if let Err(e) = &r {
+            diag(&format!("edit session failed: {e:?}"));
+        }
+        r
     }
 }
 
@@ -235,6 +267,9 @@ fn request_session(
     let flags = if sync { TF_ES_SYNC } else { TF_ES_ASYNCDONTCARE } | TF_ES_READWRITE;
     let hr = unsafe { ctx.RequestEditSession(tid, &session, flags) };
     let ok = matches!(hr, Ok(h) if h.is_ok());
+    if !ok {
+        diag(&format!("RequestEditSession sync={sync} failed: {hr:?}"));
+    }
     if !ok && sync {
         // Some hosts refuse synchronous sessions; fall back to async.
         let session: ITfEditSession = ApplySession {
@@ -244,7 +279,10 @@ fn request_session(
             sink: sink.clone(),
         }
         .into();
-        let _ = unsafe { ctx.RequestEditSession(tid, &session, TF_ES_ASYNCDONTCARE | TF_ES_READWRITE) };
+        let hr2 = unsafe { ctx.RequestEditSession(tid, &session, TF_ES_ASYNCDONTCARE | TF_ES_READWRITE) };
+        if !matches!(hr2, Ok(h) if h.is_ok()) {
+            diag(&format!("RequestEditSession async fallback failed: {hr2:?}"));
+        }
     }
 }
 
@@ -591,7 +629,19 @@ impl TextService_Impl {
 
         let result: Option<KeyResult> = {
             let mut st = self.state.borrow_mut();
-            st.engine().and_then(|e| e.process_key(keysym, mods))
+            match st.engine() {
+                None => {
+                    diag(&format!("no engine (vk={vk:#x}, composing={has_preedit})"));
+                    None
+                }
+                Some(e) => {
+                    let r = e.process_key(keysym, mods);
+                    if r.is_none() {
+                        diag(&format!("process_key got no reply (vk={vk:#x}, composing={has_preedit})"));
+                    }
+                    r
+                }
+            }
         };
         let Some(result) = result else {
             return false;

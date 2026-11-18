@@ -126,6 +126,34 @@ fn a_single_capital_word_stays_english() {
 }
 
 #[test]
+fn a_host_name_is_offered_whole_with_its_dots() {
+    // `.` would settle into 。 and cut the word in two
+    for host in ["example.jp", "example.com", "www.google.com", "windowsdeha.example.jp"] {
+        let mut engine = InputMethodEngine::new();
+        engine.converters.kanji = None;
+        type_str(&mut engine, host);
+        let list = candidates_after_space(&mut engine);
+        assert!(list.iter().any(|t| t == host), "{host}: {list:?}");
+        assert!(!list.first().unwrap().contains('。') || list.len() > 1);
+    }
+}
+
+#[test]
+fn sentence_dots_stay_kana() {
+    // two-letter endings are also plain Japanese (あす。ね): no host name
+    for typed in ["asu.ne", "kyou.", "tokyo.ne"] {
+        let mut engine = InputMethodEngine::new();
+        engine.converters.kanji = None;
+        type_str(&mut engine, typed);
+        let list = candidates_after_space(&mut engine);
+        assert!(
+            !list.iter().any(|t| t.chars().all(|c| c.is_ascii()) && t.contains('.') && t != typed),
+            "{typed}: {list:?}"
+        );
+    }
+}
+
+#[test]
 fn can_be_switched_off() {
     let mut engine = InputMethodEngine::new();
     engine.converters.kanji = None;
