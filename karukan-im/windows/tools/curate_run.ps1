@@ -11,7 +11,7 @@ param(
     [int]$Threads = 12,
     [int]$IdleMinutes = 10,
     [int]$MinFreeGB = 20,
-    [int]$StartupSeconds = 240,
+    [int]$StartupSeconds = 600,
     [int]$RunSeconds = 900
 )
 
