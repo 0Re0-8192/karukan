@@ -1,0 +1,129 @@
+{"pre": "会議の前に資料を", "reading": "かくにん", "ok": "確認", "ng": ["核人"], "post": "してください。"}
+{"pre": "この病気は早期に", "reading": "はっけん", "ok": "発見", "ng": ["発券"], "post": "することが大切だ。"}
+{"pre": "新幹線の切符を", "reading": "はっけん", "ok": "発券", "ng": ["発見"], "post": "してもらった。"}
+{"pre": "来週の", "reading": "かいぎ", "ok": "会議", "ng": ["怪議"], "post": "は中止になりました。"}
+{"pre": "昨日は早く", "reading": "ねた", "ok": "寝た", "ng": ["ネタ"], "post": "のでまだ眠い。"}
+{"pre": "このブログのための", "reading": "ねた", "ok": "ネタ", "ng": ["寝た"], "post": "を探している。"}
+{"pre": "今朝は6時に", "reading": "おきた", "ok": "起きた", "ng": ["沖田"], "post": "。"}
+{"pre": "彼は新選組の", "reading": "おきた", "ok": "沖田", "ng": ["起きた"], "post": "総司を演じた。"}
+{"pre": "この薬は頭痛に", "reading": "きいて", "ok": "効いて", "ng": ["聞いて"], "post": "いるみたいだ。"}
+{"pre": "先生の話をちゃんと", "reading": "きいて", "ok": "聞いて", "ng": ["効いて"], "post": "いなかった。"}
+{"pre": "グラフの", "reading": "てん", "ok": "点", "ng": ["天"], "post": "を結んで線にする。"}
+{"pre": "", "reading": "てん", "ok": "天", "ng": ["点"], "post": "気予報によると明日は晴れだ。"}
+{"pre": "大学で教員", "reading": "かてい", "ok": "課程", "ng": ["家庭"], "post": "を履修している。"}
+{"pre": "温かい", "reading": "かてい", "ok": "家庭", "ng": ["課程"], "post": "を築きたい。"}
+{"pre": "新しいパソコンを", "reading": "かう", "ok": "買う", "ng": ["飼う"], "post": "予定だ。"}
+{"pre": "庭で犬を", "reading": "かう", "ok": "飼う", "ng": ["買う"], "post": "のが夢だ。"}
+{"pre": "ソースコードを", "reading": "へんこう", "ok": "変更", "ng": ["返校"], "post": "してコミットした。"}
+{"pre": "電車の中で本を", "reading": "よむ", "ok": "読む", "ng": ["詠む"], "post": "のが習慣だ。"}
+{"pre": "俳句を", "reading": "よむ", "ok": "詠む", "ng": ["読む"], "post": "のは難しい。"}
+{"pre": "ご飯を", "reading": "たべる", "ok": "食べる", "ng": ["食べ類"], "post": "前に手を洗う。"}
+{"pre": "アプリを", "reading": "きどう", "ok": "起動", "ng": ["軌道"], "post": "したら画面が真っ暗になった。"}
+{"pre": "人工衛星が", "reading": "きどう", "ok": "軌道", "ng": ["起動"], "post": "に乗った。"}
+{"pre": "彼女は", "reading": "いし", "ok": "意思", "ng": ["医師"], "post": "をはっきり伝えた。"}
+{"pre": "手術をした", "reading": "いし", "ok": "医師", "ng": ["意思"], "post": "に感謝した。"}
+{"pre": "この", "reading": "せいかく", "ok": "正確", "ng": ["性格"], "post": "な数値を記録する。"}
+{"pre": "兄は明るい", "reading": "せいかく", "ok": "性格", "ng": ["正確"], "post": "だ。"}
+{"pre": "駅まで", "reading": "はしって", "ok": "走って", "ng": ["橋って"], "post": "行った。"}
+{"pre": "川に", "reading": "はし", "ok": "橋", "ng": ["箸"], "post": "が架かっている。"}
+{"pre": "ご飯を", "reading": "はし", "ok": "箸", "ng": ["橋"], "post": "で食べる。"}
+{"pre": "空に", "reading": "くも", "ok": "雲", "ng": ["蜘蛛"], "post": "が浮かんでいる。"}
+{"pre": "壁に大きな", "reading": "くも", "ok": "蜘蛛", "ng": ["雲"], "post": "がいた。"}
+{"pre": "今日は", "reading": "あつい", "ok": "暑い", "ng": ["熱い"], "post": "ので窓を開けた。"}
+{"pre": "お茶が", "reading": "あつい", "ok": "熱い", "ng": ["暑い"], "post": "から気をつけて。"}
+{"pre": "本を", "reading": "かりて", "ok": "借りて", "ng": ["刈りて"], "post": "読んだ。"}
+{"pre": "彼の話は", "reading": "しんじ", "ok": "信じ", "ng": ["神事"], "post": "られない。"}
+{"pre": "神社で", "reading": "しんじ", "ok": "神事", "ng": ["信じ"], "post": "が行われた。"}
+{"pre": "", "reading": "かんせい", "ok": "完成", "ng": ["歓声"], "post": "した作品を公開する。"}
+{"pre": "スタジアムに", "reading": "かんせい", "ok": "歓声", "ng": ["完成"], "post": "が響いた。"}
+{"pre": "高い", "reading": "ビル", "ok": "ビル", "ng": ["ビール"], "post": "が立ち並ぶ。"}
+{"pre": "仕事帰りに", "reading": "びーる", "ok": "ビール", "ng": ["ビル"], "post": "を飲んだ。"}
+{"pre": "", "reading": "こうえん", "ok": "公園", "ng": ["講演"], "post": "で子供が遊んでいる。"}
+{"pre": "大学で", "reading": "こうえん", "ok": "講演", "ng": ["公園"], "post": "を聞いた。"}
+{"pre": "駅前で", "reading": "きょうそう", "ok": "競争", "ng": ["協奏"], "post": "が激しい。"}
+{"pre": "ピアノ", "reading": "きょうそう", "ok": "協奏", "ng": ["競争"], "post": "曲を聴いた。"}
+{"pre": "この文章を", "reading": "こうせい", "ok": "校正", "ng": ["構成"], "post": "してから提出する。"}
+{"pre": "チームの", "reading": "こうせい", "ok": "構成", "ng": ["校正"], "post": "を見直す。"}
+{"pre": "彼は", "reading": "じしん", "ok": "自信", "ng": ["地震"], "post": "に満ちている。"}
+{"pre": "昨夜大きな", "reading": "じしん", "ok": "地震", "ng": ["自信"], "post": "があった。"}
+{"pre": "この件は", "reading": "しやく", "ok": "使役", "ng": ["試薬"], "post": "ではなく別の問題だ。"}
+{"pre": "データを", "reading": "ほぞん", "ok": "保存", "ng": ["保損"], "post": "してから閉じる。"}
+{"pre": "彼女は", "reading": "たいせつ", "ok": "大切", "ng": ["大雪"], "post": "な友達だ。"}
+{"pre": "冬の北国は", "reading": "おおゆき", "ok": "大雪", "ng": ["大幸"], "post": "で交通が乱れた。"}
+{"pre": "窓を", "reading": "しめる", "ok": "閉める", "ng": ["締める"], "post": "のを忘れた。"}
+{"pre": "ネクタイを", "reading": "しめる", "ok": "締める", "ng": ["閉める"], "post": "と気が引き締まる。"}
+{"pre": "今日は", "reading": "はれ", "ok": "晴れ", "ng": ["腫れ"], "post": "て気持ちがいい。"}
+{"pre": "虫に刺されて指が", "reading": "はれ", "ok": "腫れ", "ng": ["晴れ"], "post": "た。"}
+{"pre": "先生に", "reading": "ならう", "ok": "習う", "ng": ["倣う"], "post": "ことが多い。"}
+{"pre": "前例に", "reading": "ならう", "ok": "倣う", "ng": ["習う"], "post": "ことにした。"}
+{"pre": "会社の", "reading": "しゃいん", "ok": "社員", "ng": ["車員"], "post": "として働く。"}
+{"pre": "モデルの", "reading": "せいど", "ok": "精度", "ng": ["制度"], "post": "を上げたい。"}
+{"pre": "新しい", "reading": "せいど", "ok": "制度", "ng": ["精度"], "post": "が導入された。"}
+{"pre": "このバグは", "reading": "さいげん", "ok": "再現", "ng": ["際限"], "post": "できない。"}
+{"pre": "要求が", "reading": "さいげん", "ok": "際限", "ng": ["再現"], "post": "なく増える。"}
+{"pre": "画面を", "reading": "さいこう", "ok": "再考", "ng": ["最高"], "post": "してほしい。"}
+{"pre": "今日の天気は", "reading": "さいこう", "ok": "最高", "ng": ["再考"], "post": "だ。"}
+{"pre": "ファイルを", "reading": "かいとう", "ok": "解凍", "ng": ["回答"], "post": "して中身を見る。"}
+{"pre": "質問に", "reading": "かいとう", "ok": "回答", "ng": ["解凍"], "post": "する。"}
+{"pre": "このツールは", "reading": "べんり", "ok": "便利", "ng": ["弁理"], "post": "で手放せない。"}
+{"pre": "", "reading": "はいる", "ok": "入る", "ng": ["這入る"], "post": "前にノックしてください。"}
+{"pre": "結果を", "reading": "ひょうか", "ok": "評価", "ng": ["氷菓"], "post": "してレポートにまとめる。"}
+{"pre": "設定を", "reading": "さくじょ", "ok": "削除", "ng": ["作除"], "post": "して再起動する。"}
+{"pre": "モデルを", "reading": "がくしゅう", "ok": "学習", "ng": ["楽習"], "post": "させる。"}
+{"pre": "変換の", "reading": "せいど", "ok": "精度", "ng": ["制度"], "post": "を測るベンチマークだ。"}
+{"pre": "サーバーに", "reading": "せつぞく", "ok": "接続", "ng": ["折続"], "post": "できない。"}
+{"pre": "キーボードの", "reading": "はいれつ", "ok": "配列", "ng": ["排列"], "post": "を変更した。"}
+{"pre": "", "reading": "いがい", "ok": "以外", "ng": ["意外"], "post": "は全部消してください。"}
+{"pre": "彼が来るとは", "reading": "いがい", "ok": "意外", "ng": ["以外"], "post": "だった。"}
+{"pre": "", "reading": "かんしん", "ok": "関心", "ng": ["感心"], "post": "が高まっている。"}
+{"pre": "彼の努力には", "reading": "かんしん", "ok": "感心", "ng": ["関心"], "post": "した。"}
+{"pre": "この道は", "reading": "ほしょう", "ok": "保証", "ng": ["補償"], "post": "できない。"}
+{"pre": "損害を", "reading": "ほしょう", "ok": "補償", "ng": ["保証"], "post": "してもらった。"}
+{"pre": "お店で商品を", "reading": "さがす", "ok": "探す", "ng": ["捜す"], "post": "のに苦労した。"}
+{"pre": "警察が行方不明者を", "reading": "さがす", "ok": "捜す", "ng": ["探す"], "post": "。"}
+{"pre": "窓から", "reading": "けしき", "ok": "景色", "ng": ["気色"], "post": "を眺める。"}
+{"pre": "詳細は", "reading": "example.jp", "ok": "example.jp", "ng": ["エァmpェ。jp"], "post": "を参照してください。"}
+{"pre": "公式サイトは", "reading": "www.google.com", "ok": "www.google.com", "ng": ["ｗｗｗ。google。com"], "post": "です。"}
+{"pre": "ファイルの", "reading": "2.16.7", "ok": "2.16.7", "ng": ["2。16。7"], "post": "というバージョンを使う。"}
+{"pre": "", "reading": "0.7", "ok": "0.7", "ng": ["0。7"], "post": "という値に設定した。"}
+{"pre": "クラスを", "reading": "LLM", "ok": "LLM", "ng": ["エルエルエム"], "post": "として扱う。"}
+{"pre": "このアプリは", "reading": "Windows", "ok": "Windows", "ng": ["ウィンドウズ"], "post": "で動く。"}
+{"pre": "", "reading": "これさいけいか", "ok": "これ再掲か", "ng": ["これ再経過"], "post": "", "src": "corrections"}
+{"pre": "", "reading": "うぃんど", "ok": "window", "ng": ["windowsでは"], "post": "", "src": "corrections"}
+{"pre": "", "reading": "なんのがめん", "ok": "なんの画面", "ng": ["NANの画面"], "post": "", "src": "corrections"}
+{"pre": "", "reading": "のきどうしゃ", "ok": "の起動者", "ng": ["の気動車"], "post": "", "src": "corrections"}
+{"pre": "", "reading": "をとめるとろこつにかるいし", "ok": "を止めると露骨に軽いし", "ng": ["を止めると露骨に軽石"], "post": "", "src": "corrections"}
+{"pre": "", "reading": "ってうってる", "ok": "って打ってる", "ng": ["って売ってる"], "post": "", "src": "corrections"}
+{"pre": "", "reading": "ねた", "ok": "寝た", "ng": ["ネタ"], "post": "", "src": "corrections"}
+{"pre": "", "reading": "おきた", "ok": "起きた", "ng": ["沖田"], "post": "", "src": "corrections"}
+{"pre": "", "reading": "ふうの", "ok": "風乃", "ng": ["楓の"], "post": "", "src": "corrections"}
+{"pre": "", "reading": "てなにきー", "ok": "て何キー", "ng": ["てなにきー"], "post": "", "src": "corrections"}
+{"pre": "", "reading": "どこつかんでも", "ok": "どこつかんでも", "ng": ["ドコツ噛んでも"], "post": "", "src": "corrections"}
+{"pre": "", "reading": "かえるのはあんましすきくないなぁ", "ok": "変えるのはあんまし好きくないなぁ", "ng": ["買えるのはあんまし好きくないなぁ"], "post": "", "src": "corrections"}
+{"pre": "", "reading": "てかうに", "ok": "てかうにty", "ng": ["て買うにty"], "post": "", "src": "corrections"}
+{"pre": "", "reading": "どう", "ok": "どう", "ng": ["同"], "post": "", "src": "corrections"}
+{"pre": "", "reading": "2。16。7", "ok": "2.16.7", "ng": ["2。16。7"], "post": "", "src": "corrections"}
+{"pre": "", "reading": "だいぶよくはあるか", "ok": "だいぶよくはあるか", "ng": ["だいぶ欲はあるか"], "post": "", "src": "corrections"}
+{"pre": "", "reading": "もじって", "ok": "文字って", "ng": ["もじって"], "post": "", "src": "corrections"}
+{"pre": "", "reading": "のとすてぃっくで", "ok": "のとスティックで", "ng": ["のトスティックで"], "post": "", "src": "corrections"}
+{"pre": "", "reading": "きいてない", "ok": "効いてない", "ng": ["聞いてない"], "post": "", "src": "corrections"}
+{"pre": "", "reading": "ねむ", "ok": "ねむ", "ng": ["合歓"], "post": "", "src": "corrections"}
+{"pre": "", "reading": "0。", "ok": "0.", "ng": ["0。"], "post": "", "src": "corrections"}
+{"pre": "", "reading": "0。7", "ok": "0.7", "ng": ["0。7"], "post": "", "src": "corrections"}
+{"pre": "", "reading": "おーばーれいひらくとばかおもい", "ok": "オーバーレイ開くとばか重い", "ng": ["オーバーレイ開くとバカ思い"], "post": "", "src": "corrections"}
+{"pre": "", "reading": "てんでないっす", "ok": "てんでないっス", "ng": ["てんでないっす"], "post": "", "src": "corrections"}
+{"pre": "", "reading": "てんは", "ok": "点は", "ng": ["天は"], "post": "", "src": "corrections"}
+{"pre": "", "reading": "とじるーだけおとがしなかったりとか", "ok": "とじるーだけ音がしなかったりとか", "ng": ["とジルーだけ音がしなかったりとか"], "post": "", "src": "corrections"}
+{"pre": "", "reading": "なにかいかした", "ok": "なにかいかした", "ng": ["なに開花した"], "post": "", "src": "corrections"}
+{"pre": "", "reading": "いかした", "ok": "いかした", "ng": ["生かした"], "post": "", "src": "corrections"}
+{"pre": "", "reading": "のこのみだし", "ok": "の好みだし", "ng": ["のこの見出し"], "post": "", "src": "corrections"}
+{"pre": "", "reading": "すたんだーど", "ok": "Standard", "ng": ["スタンダード"], "post": "", "src": "corrections"}
+{"pre": "", "reading": "りありすてぃっく", "ok": "Realistic", "ng": ["リアリスティック"], "post": "", "src": "corrections"}
+{"pre": "", "reading": "。", "ok": ".jp", "ng": ["。jp"], "post": "", "src": "corrections"}
+{"pre": "", "reading": "いっかい", "ok": "一回", "ng": ["一介"], "post": "", "src": "corrections"}
+{"pre": "", "reading": "じょうに", "ok": "上仁", "ng": ["条に"], "post": "", "src": "corrections"}
+{"pre": "", "reading": "まるまる", "ok": "○○", "ng": ["まるまる"], "post": "", "src": "corrections"}
+{"pre": "", "reading": "かてい", "ok": "課程", "ng": ["家庭で"], "post": "", "src": "corrections"}
+{"pre": "", "reading": "。", "ok": ".jp", "ng": ["。jp"], "post": "", "src": "corrections"}
+{"pre": "", "reading": "なんかいにゅうりょく", "ok": "何回入力", "ng": ["難解入力"], "post": "", "src": "corrections"}
+{"pre": "", "reading": "へんかんのせいど", "ok": "変換の精度", "ng": ["返還の制度"], "post": "", "src": "corrections"}
