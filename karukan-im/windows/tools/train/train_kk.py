@@ -204,6 +204,21 @@ def evaluate():
     return ok / max(1, n)
 
 
+CAP = getattr(model.config, "final_logit_softcapping", None)
+
+
+def out_loss(ids, att, lab):
+    """Cross-entropy on the output positions only: the output layer (60k wide) is applied
+    to just those rows instead of every position, which is most of the memory otherwise."""
+    h = model.model(input_ids=ids, attention_mask=att).last_hidden_state[:, :-1]
+    tgt = lab[:, 1:]
+    m = tgt != -100
+    lg = model.lm_head(h[m]).float()
+    if CAP:
+        lg = torch.tanh(lg / CAP) * CAP
+    return torch.nn.functional.cross_entropy(lg, tgt[m])
+
+
 model.train()
 t_save, t_start, tok_seen = time.time(), time.time(), 0
 total = a.steps
@@ -222,7 +237,7 @@ while step < total:
         ids, att, lab = batch(a.micro_bs)
         ids, att, lab = ids.to(dev), att.to(dev), lab.to(dev)
         with torch.autocast(dev, dtype=torch.bfloat16, enabled=(dev == "cuda")):
-            loss = model(input_ids=ids, attention_mask=att, labels=lab).loss / a.accum
+            loss = out_loss(ids, att, lab) / a.accum
         loss.backward()
         loss_sum += loss.item()
         tok_seen += int(att.sum())
