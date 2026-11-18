@@ -47,7 +47,7 @@ for it in items:
     rows.append(dict(item=it, ok=s_ok, ng=s_ng, hit=s_ok > best[1], margin=s_ok - best[1]))
 
 def acc(rs): return sum(r["hit"] for r in rs) / max(1, len(rs))
-ctx = [r for r in rows if r["item"].get("src") != "corrections"]
+ctx = [r for r in rows if r["item"].get("src") not in ("corrections",)]
 long_ = [r for r in ctx if len(r["item"]["pre"]) >= 12]
 real = [r for r in rows if r["item"].get("src") == "corrections"]
 print(f"{a.model}: all {acc(rows):.1%} ({sum(r['hit'] for r in rows)}/{len(rows)})  context-set {acc(ctx):.1%} ({len(ctx)})  real-mistakes {acc(real):.1%} ({len(real)})  long-cue(pre>=12) {acc(long_):.1%} ({len(long_)})  {time.time()-t0:.0f}s")

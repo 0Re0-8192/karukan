@@ -125,3 +125,17 @@ if real and real.exists():
 out = pathlib.Path(__file__).with_name("ctxset.jsonl")
 out.write_text("\n".join(json.dumps(i, ensure_ascii=False) for i in items) + "\n", encoding="utf-8")
 print(len(items), "items ->", out)
+
+# hard set: written independently (hard_items.txt), kept apart from ctxset.jsonl
+hard = []
+for line in pathlib.Path(__file__).with_name("hard_items.txt").read_text(encoding="utf-8").splitlines():
+    f = line.split("|")
+    if len(f) != 5:
+        continue
+    pre, reading, ok, ng, post = f
+    ngs = [x for x in ng.split("/") if x and x != ok]
+    if ngs:
+        hard.append(dict(pre=pre, reading=reading, ok=ok, ng=ngs, post=post, src="hard"))
+hp = pathlib.Path(__file__).with_name("hardset.jsonl")
+hp.write_text("\n".join(json.dumps(i, ensure_ascii=False) for i in hard) + "\n", encoding="utf-8")
+print(len(hard), "hard items ->", hp)
