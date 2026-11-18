@@ -102,6 +102,7 @@ M = """
 このアプリは|Windows|Windows|ウィンドウズ|で動く。
 """.strip().splitlines()
 
+H += open(pathlib.Path(__file__).with_name("more_items.txt"),encoding="utf-8").read().strip().splitlines()
 items = []
 for line in H + M:
     pre, reading, ok, ng, post = line.split("|", 4) if line.count("|") == 4 else (None,)*5

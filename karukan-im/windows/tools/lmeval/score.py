@@ -13,6 +13,7 @@ ap.add_argument("model")
 ap.add_argument("--set", default=str(pathlib.Path(__file__).with_name("ctxset.jsonl")))
 ap.add_argument("--device", default="cuda")
 ap.add_argument("--out")
+ap.add_argument("--pre-chars", type=int, default=0, help="keep only the last N chars of the left context (the engine's context_chars)")
 ap.add_argument("--bos", default="auto", help="auto|yes|no: prepend BOS so the first token is scored")
 a = ap.parse_args()
 
@@ -38,7 +39,8 @@ def logp(text):
 items = [json.loads(l) for l in open(a.set, encoding="utf-8") if l.strip()]
 rows, t0 = [], time.time()
 for it in items:
-    full = lambda s: it["pre"] + s + it["post"]
+    pre = it["pre"][-a.pre_chars:] if a.pre_chars and it["pre"] else it["pre"]
+    full = lambda s: pre + s + it["post"]
     s_ok = logp(full(it["ok"]))
     s_ng = [(n, logp(full(n))) for n in it["ng"]]
     best = max(s_ng, key=lambda t: t[1])
@@ -46,8 +48,9 @@ for it in items:
 
 def acc(rs): return sum(r["hit"] for r in rs) / max(1, len(rs))
 ctx = [r for r in rows if r["item"].get("src") != "corrections"]
+long_ = [r for r in ctx if len(r["item"]["pre"]) >= 12]
 real = [r for r in rows if r["item"].get("src") == "corrections"]
-print(f"{a.model}: all {acc(rows):.1%} ({sum(r['hit'] for r in rows)}/{len(rows)})  context-set {acc(ctx):.1%} ({len(ctx)})  real-mistakes {acc(real):.1%} ({len(real)})  {time.time()-t0:.0f}s")
+print(f"{a.model}: all {acc(rows):.1%} ({sum(r['hit'] for r in rows)}/{len(rows)})  context-set {acc(ctx):.1%} ({len(ctx)})  real-mistakes {acc(real):.1%} ({len(real)})  long-cue(pre>=12) {acc(long_):.1%} ({len(long_)})  {time.time()-t0:.0f}s")
 for r in rows:
     if not r["hit"]:
         i = r["item"]; print("  MISS", i["pre"] + "[" + i["ok"] + "|" + "/".join(i["ng"]) + "]" + i["post"], f"{r['margin']:.1f}")
