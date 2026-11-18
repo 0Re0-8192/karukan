@@ -119,6 +119,16 @@ pub fn __create_text_service() -> windows::core::IUnknown {
     tip::TextService::new().into()
 }
 
+/// Test hook: the text left of the caret, as the engine is told it.
+#[cfg(windows)]
+#[doc(hidden)]
+pub fn __read_left_context(
+    ctx: &windows::Win32::UI::TextServices::ITfContext,
+    tid: u32,
+) -> Option<String> {
+    tip::read_left_context(ctx, tid)
+}
+
 /// Test hook: render the candidate window offscreen as BGRA.
 #[cfg(windows)]
 #[doc(hidden)]

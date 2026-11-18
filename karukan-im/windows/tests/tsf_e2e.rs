@@ -155,3 +155,48 @@ fn per_key_latency() {
     eprintln!("per key ms: {ms:?}");
     eprintln!("text: {}", h.text());
 }
+
+#[implement(ITfEditSession)]
+struct Put {
+    ctx: ITfContext,
+    text: String,
+}
+
+impl ITfEditSession_Impl for Put_Impl {
+    fn DoEditSession(&self, ec: u32) -> Result<()> {
+        unsafe {
+            let ins: windows::Win32::UI::TextServices::ITfInsertAtSelection = self.ctx.cast()?;
+            let w: Vec<u16> = self.text.encode_utf16().collect();
+            let r = ins.InsertTextAtSelection(ec, Default::default(), &w)?;
+            // an app leaves the caret after what was typed; this store does not
+            r.Collapse(ec, windows::Win32::UI::TextServices::TF_ANCHOR_END)?;
+            let sel = windows::Win32::UI::TextServices::TF_SELECTION {
+                range: std::mem::ManuallyDrop::new(Some(r)),
+                style: windows::Win32::UI::TextServices::TF_SELECTIONSTYLE {
+                    ase: windows::Win32::UI::TextServices::TF_AE_NONE,
+                    fInterimChar: windows::core::BOOL(0),
+                },
+            };
+            self.ctx.SetSelection(ec, &[sel])?;
+        }
+        Ok(())
+    }
+}
+
+#[test]
+fn the_text_left_of_the_caret_is_readable() {
+    let Some(h) = setup() else { return };
+    let text = "今日は天気が";
+    let s: ITfEditSession = Put { ctx: h.ctx.clone(), text: text.into() }.into();
+    unsafe {
+        let hr = h.ctx.RequestEditSession(h.tid, &s, TF_ES_SYNC | TF_ES_READWRITE);
+        assert!(hr.is_ok(), "{hr:?}");
+    }
+    let left = karukan_tsf::__read_left_context(&h.ctx, h.tid);
+    assert_eq!(left.as_deref(), Some(text));
+    // typing after it still works
+    for vk in [0x4B, 0x59, 0x4F, 0x55] {
+        assert!(h.key(vk));
+    }
+    assert!(h.text().ends_with("きょう"), "{:?}", h.text());
+}

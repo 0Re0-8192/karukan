@@ -16,8 +16,8 @@ use windows::Win32::UI::TextServices::{
     ITfEditSession, ITfEditSession_Impl, ITfInsertAtSelection, ITfKeyEventSink,
     ITfKeyEventSink_Impl, ITfKeystrokeMgr, ITfRange, ITfTextInputProcessor,
     ITfTextInputProcessorEx, ITfTextInputProcessorEx_Impl, ITfTextInputProcessor_Impl,
-    ITfThreadMgr, TF_AE_NONE, TF_ANCHOR_END, TF_ANCHOR_START, TF_ES_ASYNCDONTCARE, TF_ES_READWRITE,
-    TF_ES_SYNC, TF_IAS_QUERYONLY, TF_SELECTION, TF_SELECTIONSTYLE,
+    ITfThreadMgr, TF_AE_NONE, TF_ANCHOR_END, TF_ANCHOR_START, TF_DEFAULT_SELECTION, TF_ES_ASYNCDONTCARE, TF_ES_READ,
+    TF_ES_READWRITE, TF_ES_SYNC, TF_IAS_QUERYONLY, TF_SELECTION, TF_SELECTIONSTYLE,
 };
 use windows::core::{BOOL, BOOL as CoreBool, GUID, Interface, IUnknownImpl, Ref, Result, implement};
 
@@ -284,6 +284,56 @@ fn request_session(
             diag(&format!("RequestEditSession async fallback failed: {hr2:?}"));
         }
     }
+}
+
+/// How far back (UTF-16 units) the text left of the caret is read; the engine
+/// keeps its own `context_chars` of it.
+const LEFT_CONTEXT_UNITS: i32 = 40;
+
+#[implement(ITfEditSession)]
+struct ReadLeftSession {
+    ctx: ITfContext,
+    out: Rc<RefCell<Option<String>>>,
+}
+
+impl ITfEditSession_Impl for ReadLeftSession_Impl {
+    fn DoEditSession(&self, ec: u32) -> Result<()> {
+        guard(Ok(()), || {
+            let text = read_left(ec, &self.ctx).unwrap_or_default();
+            *self.out.borrow_mut() = Some(text);
+            Ok(())
+        })
+    }
+}
+
+fn read_left(ec: u32, ctx: &ITfContext) -> Result<String> {
+    unsafe {
+        let mut sel = [TF_SELECTION::default()];
+        let mut fetched = 0u32;
+        ctx.GetSelection(ec, TF_DEFAULT_SELECTION, &mut sel, &mut fetched)?;
+        let range = ManuallyDrop::into_inner(std::mem::take(&mut sel[0].range)).ok_or(E_FAIL)?;
+        let r = range.Clone()?;
+        r.Collapse(ec, TF_ANCHOR_START)?;
+        let mut halted = 0i32;
+        r.ShiftStart(ec, -LEFT_CONTEXT_UNITS, &mut halted, std::ptr::null())?;
+        let mut buf = [0u16; LEFT_CONTEXT_UNITS as usize + 8];
+        let mut n = 0u32;
+        r.GetText(ec, 0, &mut buf, &mut n)?;
+        dbg_log(&format!("left context: shifted {halted}, got {n} units"));
+        Ok(String::from_utf16_lossy(&buf[..n as usize]))
+    }
+}
+
+/// The text just left of the caret, or None when the app will not say
+/// (no text store, a game, a password field).
+pub(crate) fn read_left_context(ctx: &ITfContext, tid: u32) -> Option<String> {
+    let out = Rc::new(RefCell::new(None));
+    let session: ITfEditSession = ReadLeftSession { ctx: ctx.clone(), out: out.clone() }.into();
+    let hr = unsafe { ctx.RequestEditSession(tid, &session, TF_ES_SYNC | TF_ES_READ) };
+    if !matches!(hr, Ok(h) if h.is_ok()) {
+        return None;
+    }
+    out.borrow_mut().take()
 }
 
 fn set_selection_at_end(ec: u32, ctx: &ITfContext, range: &ITfRange) -> Result<()> {
@@ -626,6 +676,17 @@ impl TextService_Impl {
                 }
             }
         };
+
+        // The first key of a new word: hand the engine what stands left of the
+        // caret, so the model reads the sentence it is continuing.
+        if !has_preedit && !mods.control && (0x21..=0x7e).contains(&keysym) {
+            let tid = self.state.borrow().tid;
+            if let Some(left) = read_left_context(ctx, tid) {
+                if let Some(e) = self.state.borrow_mut().engine() {
+                    e.set_surrounding_text(&left, left.chars().count());
+                }
+            }
+        }
 
         let result: Option<KeyResult> = {
             let mut st = self.state.borrow_mut();
