@@ -138,8 +138,9 @@ pub fn __render_candidate_preview(
     page: usize,
     total_pages: usize,
     aux: Option<String>,
+    typed: Option<String>,
     dark: bool,
     scale: f32,
 ) -> (i32, i32, Vec<u8>) {
-    cand::render_preview(items, cursor, page, total_pages, aux, dark, scale)
+    cand::render_preview(items, cursor, page, total_pages, aux, typed, dark, scale)
 }

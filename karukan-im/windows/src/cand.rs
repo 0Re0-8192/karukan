@@ -67,6 +67,14 @@ struct View {
     desc: Vec<String>,
     cursor: usize,
     aux: Option<String>,
+    /// The keys typed so far (`kyarameru`), shown as a header row of its own
+    typed: Option<String>,
+    /// `typed` as drawn: the tail that fits the window, `…` in front of a cut one
+    typed_shown: String,
+    typed_h: i32,
+    /// The last `show` arguments, so a change to the typed keys or the aux
+    /// line can lay the window out again without a new candidate list
+    last: Option<(Vec<CandidateItem>, usize, usize, usize)>,
     page: Option<(usize, usize)>, // (current 1-based, total)
     dark: bool,
     scale: f32,
@@ -228,6 +236,28 @@ fn draw(mem: HDC, cw: i32, ch: i32) {
             fill(mem, &RECT { left: 0, top: 0, right: cw, bottom: ch }, pal.bg);
             let old_font = SelectObject(mem, HGDIOBJ(font.0));
             let top0 = px(4, v.scale);
+            if v.typed_h > 0 {
+                // the typed keys, a row of their own above the candidates
+                let mut r = RECT {
+                    left: v.pad,
+                    top: top0,
+                    right: cw - v.pad,
+                    bottom: top0 + v.typed_h,
+                };
+                let flags = (DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX).0;
+                draw_text(mem, &v.typed_shown, &mut r, flags, pal.accent);
+                fill(
+                    mem,
+                    &RECT {
+                        left: px(4, v.scale),
+                        top: top0 + v.typed_h - 1,
+                        right: cw - px(4, v.scale),
+                        bottom: top0 + v.typed_h,
+                    },
+                    pal.border,
+                );
+            }
+            let top0 = top0 + v.typed_h;
             for (i, row) in v.rows.iter().enumerate() {
                 let top = top0 + i as i32 * v.row_h;
                 let band = RECT {
@@ -399,6 +429,24 @@ pub struct Anchor {
     pub bottom: i32,
 }
 
+/// The tail of `text` that fits `max_w`, with `…` in front when the head was cut:
+/// the keys typed last are the ones being looked at.
+fn fit_tail(font: HFONT, text: &str, max_w: i32) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    let mut skip = 0;
+    loop {
+        let s: String = if skip == 0 {
+            chars.iter().collect()
+        } else {
+            std::iter::once('…').chain(chars[skip..].iter().copied()).collect()
+        };
+        if skip + 1 >= chars.len() || measure(font, &[s.as_str()]).0 <= max_w {
+            return s;
+        }
+        skip += 1;
+    }
+}
+
 /// Lay the candidates out for `scale` and store them in the view; returns
 /// the window size in device pixels.
 fn compute(
@@ -429,6 +477,15 @@ fn compute(
     let has_footer = aux.is_some() || page_label.is_some();
 
     let pad = px(12, scale);
+    let typed = VIEW
+        .with(|v| v.borrow().typed.clone())
+        .filter(|t| !t.is_empty());
+    let typed_shown = typed
+        .as_deref()
+        .map(|t| fit_tail(font, t, px(520, scale) - pad * 2))
+        .unwrap_or_default();
+    let (typed_w, _) = measure(font, &[typed_shown.as_str()]);
+    let typed_h = if typed.is_some() { text_h + px(10, scale) } else { 0 };
     let row_h = text_h + px(10, scale);
     let footer_h = if has_footer { small_h + px(10, scale) } else { 0 };
     let comment_gap = if desc_w > 0 { px(28, scale) } else { 0 };
@@ -436,8 +493,11 @@ fn compute(
     let footer_w = pad * 2
         + aux_w
         + if page_w > 0 { page_w + px(12, scale) } else { 0 };
-    let width = content_w.max(footer_w).clamp(px(180, scale), px(520, scale));
-    let height = rows.len() as i32 * row_h + footer_h + px(8, scale);
+    let width = content_w
+        .max(footer_w)
+        .max(pad * 2 + typed_w)
+        .clamp(px(180, scale), px(520, scale));
+    let height = typed_h + rows.len() as i32 * row_h + footer_h + px(8, scale);
 
     VIEW.with(|v| {
         let mut v = v.borrow_mut();
@@ -453,6 +513,8 @@ fn compute(
         v.text_w = text_w;
         v.desc_w = desc_w;
         v.footer_h = footer_h;
+        v.typed_shown = typed_shown;
+        v.typed_h = typed_h;
         v.width = width;
     });
     (width, height)
@@ -468,6 +530,7 @@ pub fn show(
     anchor: Option<Anchor>,
 ) {
     let Some(hwnd) = ensure_window() else { return };
+    VIEW.with(|v| v.borrow_mut().last = Some((items.to_vec(), cursor, page, total_pages)));
     if anchor.is_some() {
         LAST_ANCHOR.with(|a| a.set(anchor));
     }
@@ -578,6 +641,23 @@ pub fn set_aux(text: Option<String>) {
     VIEW.with(|v| v.borrow_mut().aux = text);
 }
 
+/// The keys typed so far, drawn as a header row above the candidates.
+pub fn set_typed(text: Option<String>) {
+    VIEW.with(|v| v.borrow_mut().typed = text);
+}
+
+/// Lay the open window out again with the current aux line and typed keys
+/// (the candidates themselves unchanged), so a key that only changed those
+/// is on screen at once.
+pub fn refresh() {
+    if !is_visible() {
+        return;
+    }
+    if let Some((items, cursor, page, total)) = VIEW.with(|v| v.borrow().last.clone()) {
+        show(&items, cursor, page, total, None);
+    }
+}
+
 pub fn hide() {
     LAST_ANCHOR.with(|a| a.set(None));
     if let Some(h) = HWND_CAND.with(|h| *h.borrow()) {
@@ -611,6 +691,7 @@ pub fn render_preview(
     page: usize,
     total_pages: usize,
     aux: Option<String>,
+    typed: Option<String>,
     dark: bool,
     scale: f32,
 ) -> (i32, i32, Vec<u8>) {
@@ -618,6 +699,7 @@ pub fn render_preview(
         BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, GetDIBits,
     };
     set_aux(aux);
+    set_typed(typed);
     let (w, h) = compute(items, cursor, page, total_pages, scale, dark);
     unsafe {
         let hdc = GetDC(None);

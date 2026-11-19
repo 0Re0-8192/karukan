@@ -34,6 +34,7 @@ fn render_previews() {
             0,
             3,
             Some("[あ] かるかん (jinen-v2-small-q8)".to_string()),
+            Some("kyarameru".to_string()),
             dark,
             scale,
         );

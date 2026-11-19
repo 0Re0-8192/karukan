@@ -66,14 +66,17 @@ fn test_editing_scenarios() {
             "ykt_backspace_then_o",
             &[("ykt", "ykt"), ("⌫", "yk"), ("o", "yこ")],
         ),
-        // Deleting a converted element re-exposes the live consonants
-        // before it, one conversion at a time
+        // Backspace takes back one keystroke, so a converted character
+        // reverts to the keys that made it and the live consonants before
+        // it combine as they did when typed
         (
             "ytko_backspace_recombines_stepwise",
             &[
                 ("ytko", "ytこ"),
+                ("⌫", "ytk"),
                 ("⌫", "yt"),
                 ("o", "yと"),
+                ("⌫", "yt"),
                 ("⌫", "y"),
                 ("o", "よ"),
             ],
@@ -83,23 +86,24 @@ fn test_editing_scenarios() {
             "kyt_backspace_then_o",
             &[("kyt", "kyt"), ("⌫", "ky"), ("o", "きょ")],
         ),
-        // Settled text never reverts
+        // Backspace undoes the keystroke, not the kana: キャ is `kya`, so
+        // one Backspace leaves `ky`
         (
-            "kk_backspace_keeps_sokuon",
-            &[("kk", "っk"), ("⌫", "っ"), ("a", "っあ")],
+            "kk_backspace_leaves_one_k",
+            &[("kk", "っk"), ("⌫", "k"), ("a", "か")],
         ),
         (
-            "nk_backspace_keeps_n",
-            &[("nk", "んk"), ("⌫", "ん"), ("a", "んあ")],
+            "nk_backspace_leaves_n",
+            &[("nk", "んk"), ("⌫", "n"), ("a", "な")],
         ),
         (
             "kyo_backspace_then_o",
-            &[("kyo", "きょ"), ("⌫", "き"), ("o", "きお")],
+            &[("kyo", "きょ"), ("⌫", "ky"), ("o", "きょ")],
         ),
         // Erasing everything resets the state
         (
             "kan_backspace_to_empty",
-            &[("kan", "かn"), ("⌫", "か"), ("⌫", "∅")],
+            &[("kan", "かn"), ("⌫", "か"), ("⌫", "k"), ("⌫", "∅")],
         ),
         (
             "consonant_run_backspace_to_empty",
@@ -154,7 +158,7 @@ fn test_editing_scenarios() {
         // A doubled consonant after a rule prefix keeps the prefix alive
         (
             "prefixed_double_consonant_keeps_prefix",
-            &[("tyy", "tっy"), ("⌫", "tっ"), ("⌫", "t"), ("a", "た")],
+            &[("tyy", "tっy"), ("⌫", "ty"), ("⌫", "t"), ("a", "た")],
         ),
         // Returning from conversion keeps the reading editable
         (

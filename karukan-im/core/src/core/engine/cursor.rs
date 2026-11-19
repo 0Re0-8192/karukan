@@ -28,11 +28,13 @@ impl InputMethodEngine {
         // element vanishes whole, re-exposing the live element before it
         // (`ytko` → BS → `o` → 「yと」); きょ is truncated per character.
         let reading_before = self.input_buf.reading();
-        if !self.edit_with_chunk_breaks(|e| e.input_buf.backspace(&e.converters.romaji)) {
-            // Nothing to delete
-            return EngineResult::consumed();
+        if !self.undo_last_keystroke() {
+            if !self.edit_with_chunk_breaks(|e| e.input_buf.backspace(&e.converters.romaji)) {
+                // Nothing to delete
+                return EngineResult::consumed();
+            }
+            self.raw_keys.pop();
         }
-        self.raw_keys.pop();
 
         if let Some(result) = self.try_reset_if_empty() {
             return result;
@@ -47,6 +49,40 @@ impl InputMethodEngine {
                 .with_action(EngineAction::UpdateAuxText(self.format_aux_composing()));
         }
         self.refresh_input_state()
+    }
+
+    /// Backspace takes back the last *keystroke*, not the last character:
+    /// `kya` (キャ) → BS → `ky`, where deleting a character would leave キ
+    /// and a keystroke count that no longer spells it. The composition is
+    /// retyped from the remaining keys, so the result is what typing them
+    /// fresh gives.
+    ///
+    /// Only for the plain case — kana input, caret at the end, no manual
+    /// chunk break, keys that are lowercase letters (or `-`) and that
+    /// reproduce the composition. Anything else (a cursor edit, a digit, a
+    /// capital, a symbol) keeps the character-wise Backspace.
+    fn undo_last_keystroke(&mut self) -> bool {
+        if self.mode.current() != InputMode::Hiragana
+            || !self.chunk_breaks.is_empty()
+            || self.input_buf.cursor() != self.input_buf.char_count()
+            || self.raw_keys.is_empty()
+            || !self
+                .raw_keys
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c == '-')
+        {
+            return false;
+        }
+        let romaji = &self.converters.romaji;
+        if romaji.convert_flush(&self.raw_keys) != self.input_buf.settled_reading(romaji) {
+            return false;
+        }
+        self.raw_keys.pop();
+        self.input_buf.clear();
+        for ch in self.raw_keys.chars() {
+            self.input_buf.push_romaji(ch, &self.converters.romaji);
+        }
+        true
     }
 
     /// Move caret left within the composition

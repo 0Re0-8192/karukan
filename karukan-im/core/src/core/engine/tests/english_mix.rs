@@ -162,3 +162,42 @@ fn can_be_switched_off() {
     let list = candidates_after_space(&mut engine);
     assert!(list.iter().all(|t| t != "windowsでは"), "{list:?}");
 }
+
+#[test]
+fn backspace_takes_back_the_last_keystroke_not_the_last_character() {
+    // キャ is three keystrokes: Backspace leaves `ky`, not キ
+    let mut engine = InputMethodEngine::new();
+    engine.converters.kanji = None;
+    type_str(&mut engine, "kya");
+    assert_eq!(engine.preedit().unwrap().text(), "きゃ");
+    engine.process_key(&press_key(Keysym::BACKSPACE));
+    assert_eq!(engine.preedit().unwrap().text(), "ky");
+    assert_eq!(engine.typed_keys(), "ky");
+    engine.process_key(&press_key(Keysym::BACKSPACE));
+    assert_eq!(engine.preedit().unwrap().text(), "k");
+    engine.process_key(&press_key(Keysym::BACKSPACE));
+    assert!(engine.preedit().map_or(true, |p| p.text().is_empty()));
+    assert_eq!(engine.typed_keys(), "");
+}
+
+#[test]
+fn backspace_keeps_the_typed_keys_visible_down_a_long_word() {
+    let mut engine = InputMethodEngine::new();
+    engine.converters.kanji = None;
+    type_str(&mut engine, "kyarameru");
+    for want in ["kyarameru", "kyaramer", "kyarame", "kyaram", "kyara", "kyar", "kya"] {
+        assert_eq!(engine.typed_keys(), want);
+        engine.process_key(&press_key(Keysym::BACKSPACE));
+    }
+    assert_eq!(engine.typed_keys(), "ky");
+    assert_eq!(engine.preedit().unwrap().text(), "ky");
+}
+
+#[test]
+fn backspace_stays_character_wise_when_the_keys_are_not_plain_letters() {
+    let mut engine = InputMethodEngine::new();
+    engine.converters.kanji = None;
+    type_str(&mut engine, "ka1");
+    engine.process_key(&press_key(Keysym::BACKSPACE));
+    assert_eq!(engine.preedit().unwrap().text(), "か");
+}

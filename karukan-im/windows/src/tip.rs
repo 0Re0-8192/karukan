@@ -408,8 +408,15 @@ fn apply_actions(
             }
         }
         // Every batch with candidates re-folds, since the typed keys change per key.
-        if touched || actions.iter().any(|a| matches!(a, Action::ShowCandidates { .. })) {
-            cand::set_aux(footer_text(&st.typed, st.aux.as_deref()));
+        let shows = actions.iter().any(|a| matches!(a, Action::ShowCandidates { .. }));
+        if touched || shows {
+            cand::set_aux(st.aux.clone());
+            cand::set_typed(Some(st.typed.clone()).filter(|t| !t.is_empty()));
+            // no new list in this batch (Backspace keeps the window as it is):
+            // the open window still has to show the new keys
+            if !shows && !actions.iter().any(|a| matches!(a, Action::HideCandidates)) {
+                cand::refresh();
+            }
         }
     }
     for a in actions {
@@ -438,22 +445,6 @@ fn apply_actions(
         }
     }
     Ok(())
-}
-
-/// The keys typed so far (as typed, e.g. `kaigi`) ahead of the engine's own line.
-fn footer_text(typed: &str, aux: Option<&str>) -> Option<String> {
-    const KEEP: usize = 24;
-    let n = typed.chars().count();
-    let shown: String = if n > KEEP {
-        format!("…{}", typed.chars().skip(n - KEEP).collect::<String>())
-    } else {
-        typed.to_string()
-    };
-    match (shown.is_empty(), aux) {
-        (true, a) => a.map(str::to_string),
-        (false, Some(a)) => Some(format!("{shown} │ {a}")),
-        (false, None) => Some(shown),
-    }
 }
 
 fn text_anchor(state: &Rc<RefCell<State>>, ec: u32, ctx: &ITfContext) -> Option<Anchor> {
@@ -846,18 +837,3 @@ impl ITfDisplayAttributeProvider_Impl for TextService_Impl {
 
 #[allow(dead_code)]
 fn _types(_: PathBuf, _: CoreBool, _: Option<ITfTextInputProcessor>) {}
-
-#[cfg(test)]
-mod typed_tests {
-    use super::*;
-
-    #[test]
-    fn footer_joins_typed_and_aux() {
-        assert_eq!(footer_text("", Some("a")), Some("a".into()));
-        assert_eq!(footer_text("kaigi", Some("a")), Some("kaigi │ a".into()));
-        assert_eq!(footer_text("kaigi", None), Some("kaigi".into()));
-        assert_eq!(footer_text("", None), None);
-        let long = "a".repeat(40);
-        assert_eq!(footer_text(&long, None).unwrap().chars().count(), 25);
-    }
-}
