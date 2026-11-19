@@ -26,6 +26,7 @@ ap.add_argument("--data", nargs="+", required=True, help="name=path:weight")
 ap.add_argument("--steps", type=int, default=20000)
 ap.add_argument("--micro-bs", type=int, default=32)
 ap.add_argument("--accum", type=int, default=8)
+ap.add_argument("--tok-budget", type=int, default=10240, help="padded tokens per micro-batch (the VRAM knob)")
 ap.add_argument("--lr", type=float, default=1e-4)
 ap.add_argument("--warmup", type=int, default=200)
 ap.add_argument("--max-len", type=int, default=160)
@@ -104,14 +105,29 @@ def encode_row(r):
 rng = random.Random(a.seed)
 
 
+
+def collate(items):
+    L = max(len(p) + len(o) for p, o in items)
+    ids = np.full((len(items), L), PAD, dtype=np.int64)
+    lab = np.full((len(items), L), -100, dtype=np.int64)
+    att = np.zeros((len(items), L), dtype=np.int64)
+    for i, (p, o) in enumerate(items):
+        n = len(p) + len(o)
+        ids[i, :n] = p + o
+        lab[i, len(p):n] = o
+        att[i, :n] = 1
+    return torch.from_numpy(ids), torch.from_numpy(att), torch.from_numpy(lab)
+
+
 POOL_STEPS = 8          # steps' worth of rows sorted by length together
 
 
 def step_groups():
     """One optimizer step's micro-batches at a time. Rows are drawn POOL_STEPS steps at a time and
-    sorted by length before being cut into micro-batches, so a micro-batch holds rows of about
-    one length (dictionary words are ~15 tokens, sentences up to 160: mixed, most of the
-    compute went to padding); the micro-batches are then shuffled across the pool's steps."""
+    sorted by length, then cut into micro-batches of about --tok-budget padded tokens: short rows
+    (dictionary words ~15 tokens, sentences up to 160) share a long micro-batch instead of a
+    fixed row count, so neither padding nor the number of kernel launches is wasted. The
+    micro-batches are shuffled and regrouped into steps of >= micro_bs * accum rows."""
     per = a.accum * a.micro_bs
     while True:
         items = []
@@ -121,10 +137,22 @@ def step_groups():
             if e:
                 items.append(e)
         items.sort(key=lambda x: len(x[0]) + len(x[1]))
-        mbs = [collate(items[i:i + a.micro_bs]) for i in range(0, len(items), a.micro_bs)]
+        mbs, cur = [], []
+        for it in items:
+            if cur and (len(cur) + 1) * (len(it[0]) + len(it[1])) > a.tok_budget:
+                mbs.append(collate(cur))
+                cur = []
+            cur.append(it)
+        if cur:
+            mbs.append(collate(cur))
         rng.shuffle(mbs)
-        for k in range(POOL_STEPS):
-            yield mbs[k * a.accum:(k + 1) * a.accum]
+        step, rows = [], 0
+        for mb in mbs:
+            step.append(mb)
+            rows += mb[0].shape[0]
+            if rows >= per:
+                yield step
+                step, rows = [], 0
 
 
 def prefetch(gen, depth=6):
@@ -138,19 +166,6 @@ def prefetch(gen, depth=6):
     threading.Thread(target=work, daemon=True).start()
     while True:
         yield q.get()
-
-
-def collate(items):
-    L = max(len(p) + len(o) for p, o in items)
-    ids = torch.full((len(items), L), PAD, dtype=torch.long)
-    lab = torch.full((len(items), L), -100, dtype=torch.long)
-    att = torch.zeros((len(items), L), dtype=torch.long)
-    for i, (p, o) in enumerate(items):
-        n = len(p) + len(o)
-        ids[i, :n] = torch.tensor(p + o)
-        lab[i, len(p):n] = torch.tensor(o)
-        att[i, :n] = 1
-    return ids, att, lab
 
 
 dev = a.device
