@@ -293,10 +293,7 @@ impl InputMethodEngine {
         let raw = self.raw_keys.clone();
         // Edits around the keystrokes (cursor moves, mid-buffer inserts)
         // leave raw_keys stale; only trust it when it reproduces the reading.
-        if !self
-            .converters
-            .romaji
-            .convert_flush(&raw)
+        if !with_decimal_points(self.converters.romaji.convert_flush(&raw))
             .eq_ignore_ascii_case(reading)
         {
             return None;
@@ -323,10 +320,7 @@ impl InputMethodEngine {
         {
             return None;
         }
-        if !self
-            .converters
-            .romaji
-            .convert_flush(&self.raw_keys)
+        if !with_decimal_points(self.converters.romaji.convert_flush(&self.raw_keys))
             .eq_ignore_ascii_case(reading)
         {
             return None;
@@ -345,8 +339,7 @@ impl InputMethodEngine {
         }
         if self.mode.current() == InputMode::Hiragana {
             let romaji = &self.converters.romaji;
-            if !romaji
-                .convert_flush(&self.raw_keys)
+            if !with_decimal_points(romaji.convert_flush(&self.raw_keys))
                 .eq_ignore_ascii_case(&self.input_buf.settled_reading(romaji))
             {
                 return String::new();
@@ -372,8 +365,7 @@ impl InputMethodEngine {
             return None;
         }
         let romaji = &self.converters.romaji;
-        if !romaji
-            .convert_flush(&self.raw_keys)
+        if !with_decimal_points(romaji.convert_flush(&self.raw_keys))
             .eq_ignore_ascii_case(&self.input_buf.settled_reading(romaji))
         {
             return None;
@@ -463,4 +455,23 @@ mod tests {
     fn keeps_typed_case() {
         assert_eq!(show("WindowsDeha").as_deref(), Some("[Windows]<Deha>"));
     }
+}
+
+
+/// What the keys read as, with a `.` between digits left a point (`1.5`) —
+/// the romaji rules alone read it as `。`, which the composition no longer
+/// holds once the digit after it has been typed.
+pub(super) fn with_decimal_points(reading: String) -> String {
+    let chars: Vec<char> = reading.chars().collect();
+    chars
+        .iter()
+        .enumerate()
+        .map(|(i, &c)| {
+            let between = i > 0
+                && i + 1 < chars.len()
+                && chars[i - 1].is_ascii_digit()
+                && chars[i + 1].is_ascii_digit();
+            if c == '。' && between { '.' } else { c }
+        })
+        .collect()
 }

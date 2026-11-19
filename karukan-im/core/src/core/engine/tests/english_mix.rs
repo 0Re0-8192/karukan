@@ -201,3 +201,18 @@ fn backspace_stays_character_wise_when_the_keys_are_not_plain_letters() {
     engine.process_key(&press_key(Keysym::BACKSPACE));
     assert_eq!(engine.preedit().unwrap().text(), "か");
 }
+
+#[test]
+fn a_dot_between_digits_stays_a_decimal_point() {
+    for (typed, want) in [("1.5", "1.5"), ("3.14", "3.14"), ("v1.2.3", "v1.2.3"), ("1.", "1。"), ("a.5", "あ。5")] {
+        let mut engine = InputMethodEngine::new();
+        engine.converters.kanji = None;
+        type_str(&mut engine, typed);
+        assert_eq!(engine.preedit().unwrap().text(), want, "{typed}");
+    }
+    // the typed-keys view keeps following it
+    let mut engine = InputMethodEngine::new();
+    engine.converters.kanji = None;
+    type_str(&mut engine, "1.5");
+    assert_eq!(engine.typed_keys(), "1.5");
+}

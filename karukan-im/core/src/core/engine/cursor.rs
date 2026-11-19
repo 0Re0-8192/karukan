@@ -74,7 +74,9 @@ impl InputMethodEngine {
             return false;
         }
         let romaji = &self.converters.romaji;
-        if romaji.convert_flush(&self.raw_keys) != self.input_buf.settled_reading(romaji) {
+        if super::english_mix::with_decimal_points(romaji.convert_flush(&self.raw_keys))
+            != self.input_buf.settled_reading(romaji)
+        {
             return false;
         }
         self.raw_keys.pop();

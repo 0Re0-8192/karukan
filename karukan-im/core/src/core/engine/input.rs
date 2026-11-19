@@ -417,6 +417,9 @@ impl InputMethodEngine {
         // PassThrough chars accumulate in the preedit alongside hiragana,
         // allowing users to compose `「」`, type `'word'`, and access symbol
         // variants from the candidate list.
+        // `1.5`: the `.` already settled as 。, and a digit right after a digit
+        // and that mark says it was a decimal point
+        self.input_buf.decimal_point_before_digit(ch);
         self.edit_with_chunk_breaks(|e| e.input_buf.push_romaji(ch, &e.converters.romaji));
 
         if let Some(result) = self.try_reset_if_empty() {

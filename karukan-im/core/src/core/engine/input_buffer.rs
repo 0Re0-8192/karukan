@@ -96,6 +96,27 @@ impl InputBuffer {
         self.evaluate_active_run(romaji);
     }
 
+    /// A digit typed straight after `digit` + `。` (the `.` key settled as a
+    /// sentence mark) turns that mark into the decimal point it is in `1.5`,
+    /// at the width of the digit before it. Nothing else changes; false when
+    /// the caret, the mark or the digit before it do not fit.
+    pub fn decimal_point_before_digit(&mut self, digit: char) -> bool {
+        if !digit.is_ascii_digit() || self.cursor != self.elements.len() || self.cursor < 2 {
+            return false;
+        }
+        let (Element::Converted(mark), Element::Converted(num)) =
+            (self.elements[self.cursor - 1], self.elements[self.cursor - 2])
+        else {
+            return false;
+        };
+        let half = num.is_ascii_digit();
+        if !matches!(mark, '。' | '．' | '.') || !(half || ('０'..='９').contains(&num)) {
+            return false;
+        }
+        self.elements[self.cursor - 1] = Element::Converted(if half { '.' } else { '．' });
+        true
+    }
+
     /// Record a direct-input keystroke (alphabet/emoji mode) at the caret,
     /// settled as-is.
     pub fn push_direct(&mut self, ch: char) {
