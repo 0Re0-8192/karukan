@@ -12,7 +12,7 @@ and stops cleanly when the file STOP appears in the output directory.
       --steps 20000 --vram-gb 6 --duty 0.5
 
 Resumes from OUT/ckpt when it exists."""
-import argparse, json, math, os, random, subprocess, time, unicodedata
+import argparse, json, math, os, queue, random, subprocess, threading, time, unicodedata
 
 import numpy as np
 import torch
@@ -104,14 +104,40 @@ def encode_row(r):
 rng = random.Random(a.seed)
 
 
-def batch(bs):
-    items = []
-    while len(items) < bs:
-        s = rng.choices(sources, weights=[x.weight for x in sources])[0]
-        e = encode_row(s.next())
-        if e:
-            items.append(e)
-    return collate(items)
+POOL_STEPS = 8          # steps' worth of rows sorted by length together
+
+
+def step_groups():
+    """One optimizer step's micro-batches at a time. Rows are drawn POOL_STEPS steps at a time and
+    sorted by length before being cut into micro-batches, so a micro-batch holds rows of about
+    one length (dictionary words are ~15 tokens, sentences up to 160: mixed, most of the
+    compute went to padding); the micro-batches are then shuffled across the pool's steps."""
+    per = a.accum * a.micro_bs
+    while True:
+        items = []
+        while len(items) < per * POOL_STEPS:
+            s = rng.choices(sources, weights=[x.weight for x in sources])[0]
+            e = encode_row(s.next())
+            if e:
+                items.append(e)
+        items.sort(key=lambda x: len(x[0]) + len(x[1]))
+        mbs = [collate(items[i:i + a.micro_bs]) for i in range(0, len(items), a.micro_bs)]
+        rng.shuffle(mbs)
+        for k in range(POOL_STEPS):
+            yield mbs[k * a.accum:(k + 1) * a.accum]
+
+
+def prefetch(gen, depth=6):
+    """Builds the next steps' batches on a thread while the GPU works on this one."""
+    q = queue.Queue(maxsize=depth)
+
+    def work():
+        for g in gen:
+            q.put(g)
+
+    threading.Thread(target=work, daemon=True).start()
+    while True:
+        yield q.get()
 
 
 def collate(items):
@@ -216,10 +242,11 @@ def out_loss(ids, att, lab):
     lg = model.lm_head(h[m]).float()
     if CAP:
         lg = torch.tanh(lg / CAP) * CAP
-    return torch.nn.functional.cross_entropy(lg, tgt[m])
+    return torch.nn.functional.cross_entropy(lg, tgt[m], reduction="sum")   # the caller divides by the step's token count
 
 
 model.train()
+groups = prefetch(step_groups())
 t_save, t_start, tok_seen = time.time(), time.time(), 0
 total = a.steps
 while step < total:
@@ -232,12 +259,13 @@ while step < total:
     for g in opt.param_groups:
         g["lr"] = lr
     loss_sum = 0.0
-    for _ in range(a.accum):
+    group = next(groups)
+    n_out = sum(int((lab[:, 1:] != -100).sum()) for _, _, lab in group)   # every output token weighs the same, whichever micro-batch it is in
+    for ids, att, lab in group:
         t0 = time.perf_counter()
-        ids, att, lab = batch(a.micro_bs)
-        ids, att, lab = ids.to(dev), att.to(dev), lab.to(dev)
+        ids, att, lab = ids.to(dev, non_blocking=True), att.to(dev, non_blocking=True), lab.to(dev, non_blocking=True)
         with torch.autocast(dev, dtype=torch.bfloat16, enabled=(dev == "cuda")):
-            loss = out_loss(ids, att, lab) / a.accum
+            loss = out_loss(ids, att, lab) / n_out
         loss.backward()
         loss_sum += loss.item()
         tok_seen += int(att.sum())
