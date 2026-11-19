@@ -194,7 +194,7 @@ def wait_for_room(need):
         time.sleep(30)
 
 
-wait_for_room(a.vram_gb + 1.0)
+wait_for_room(a.vram_gb + 0.3)
 ck = os.path.join(a.out, "ckpt")
 resume = os.path.exists(os.path.join(ck, "state.json"))
 model = AutoModelForCausalLM.from_pretrained(ck if resume else a.model, dtype=torch.float32).to(dev)
