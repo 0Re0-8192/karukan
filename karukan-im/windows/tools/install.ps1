@@ -42,19 +42,34 @@ if ($Uninstall) {
     return
 }
 
-# 1. files: move a differing (possibly locked) file aside, then copy the new one
+# 1. files. karukan_tsf.dll in $Dest is a thin loader that never needs replacing while apps hold it;
+#    the code is karukan_tsf_impl_<stamp>.dll, a new file per update that an app picks up the next
+#    time TSF activates the text service in it (input method switched away and back), no restart.
 $stamp = Get-Date -Format 'yyMMddHHmmss'
-foreach ($name in 'karukan_tsf.dll', 'karukan-imserver.exe') {
-    $src = Join-Path $Source $name
-    if (-not (Test-Path $src)) { throw "missing build output: $src" }
-    $dst = Join-Path $Dest $name
-    if ((Test-Path $dst) -and ((Get-FileHash $src).Hash -eq (Get-FileHash $dst).Hash)) { "same: $name"; continue }
-    if (Test-Path $dst) { Move-Item $dst "$dst.old$stamp" }
+function Copy-IfChanged($src, $dst) {
+    if ((Test-Path $dst) -and ((Get-FileHash $src).Hash -eq (Get-FileHash $dst).Hash)) { "same: $(Split-Path $dst -Leaf)"; return }
+    if (Test-Path $dst) { Move-Item $dst "$dst.old$stamp" }    # a running copy is renamed aside, not overwritten
     Copy-Item $src $dst
+    "copied: $(Split-Path $dst -Leaf)"
+}
+foreach ($f in 'karukan_tsf.dll', 'karukan_tsf_loader.dll', 'karukan-imserver.exe') {
+    if (-not (Test-Path (Join-Path $Source $f))) { throw "missing build output: $(Join-Path $Source $f)" }
+}
+Copy-IfChanged (Join-Path $Source 'karukan_tsf_loader.dll') $dll
+Copy-IfChanged (Join-Path $Source 'karukan-imserver.exe') (Join-Path $Dest 'karukan-imserver.exe')
+$newImpl = Join-Path $Source 'karukan_tsf.dll'
+$impls = @(Get-ChildItem $Dest -Filter 'karukan_tsf_impl_*.dll' | Sort-Object Name)
+if ($impls.Count -gt 0 -and (Get-FileHash $newImpl).Hash -eq (Get-FileHash $impls[-1].FullName).Hash) {
+    "same: $($impls[-1].Name)"
+} else {
+    $name = "karukan_tsf_impl_$stamp.dll"
+    Copy-Item $newImpl (Join-Path $Dest $name)
     "copied: $name"
 }
-# old copies that nothing holds any more
+# old copies that nothing holds any more (a copy an app still has loaded stays until it exits)
 Get-ChildItem $Dest -Filter 'karukan*.old*' | ForEach-Object { try { Remove-Item $_.FullName -ErrorAction Stop } catch {} }
+Get-ChildItem $Dest -Filter 'karukan_tsf_impl_*.dll' | Sort-Object Name | Select-Object -SkipLast 1 |
+    ForEach-Object { try { Remove-Item $_.FullName -ErrorAction Stop } catch {} }
 
 # 2. portable layout: settings, learning and models stay under $Dest
 $flag = Join-Path $Dest 'portable.flag'
@@ -86,4 +101,4 @@ public static class KarukanInputDll {
 }
 '@
 $ok = [KarukanInputDll]::InstallLayoutOrTip("0411:$Clsid$Profile", 0)
-"registered, enabled for user: $ok  (reopen apps to load the new DLL)"
+"registered, enabled for user: $ok  (apps load the new code when the input method is switched away and back)"

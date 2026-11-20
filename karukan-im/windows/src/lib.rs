@@ -52,7 +52,13 @@ mod dll {
         p.parent().map(|d| d.to_path_buf())
     }
 
+    /// Path to register as the COM server when the loader DLL registers on this one's behalf.
+    static REGISTER_AS: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
     pub fn dll_path() -> Option<String> {
+        if let Some(p) = REGISTER_AS.get() {
+            return Some(p.clone());
+        }
         let mut buf = [0u16; 1024];
         let n = unsafe { GetModuleFileNameW(Some(module()), &mut buf) } as usize;
         (n > 0 && n < buf.len()).then(|| String::from_utf16_lossy(&buf[..n]))
@@ -98,6 +104,18 @@ mod dll {
             Ok(()) => S_OK,
             Err(e) => e.code(),
         }
+    }
+
+    /// Called by `karukan_tsf.dll` (the loader): register that file as the COM server.
+    #[unsafe(no_mangle)]
+    extern "system" fn KarukanTsfRegisterAs(path: *const u16) -> HRESULT {
+        if path.is_null() {
+            return E_POINTER;
+        }
+        let len = (0..).take_while(|&i| unsafe { *path.add(i) } != 0).count();
+        let p = String::from_utf16_lossy(unsafe { std::slice::from_raw_parts(path, len) });
+        let _ = REGISTER_AS.set(p);
+        DllRegisterServer()
     }
 
     #[unsafe(no_mangle)]

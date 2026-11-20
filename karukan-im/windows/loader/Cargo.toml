@@ -1,0 +1,17 @@
+[package]
+name = "karukan-tsf-loader"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Thin COM front for karukan_tsf: loads the newest karukan_tsf_impl_*.dll next to it each time TSF asks for the class, so an update needs no app restart"
+
+[lib]
+name = "karukan_tsf_loader"
+crate-type = ["cdylib"]
+
+[target.'cfg(windows)'.dependencies.windows]
+version = "0.62"
+features = ["Win32_Foundation", "Win32_System_LibraryLoader"]

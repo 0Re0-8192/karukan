@@ -1808,6 +1808,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "karukan-tsf-loader"
+version = "0.1.0"
+dependencies = [
+ "windows",
+]
+
+[[package]]
 name = "konst"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"

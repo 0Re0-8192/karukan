@@ -35,7 +35,7 @@ if ($Clean) {
 $t0 = Get-Date
 cargo +1.96.0 build --release -p karukan-im --bin karukan-imserver --offline
 if ($LASTEXITCODE -ne 0) { "BUILD-FAILED imserver exit=$LASTEXITCODE"; exit 1 }
-cargo build --release -p karukan-tsf --offline
+cargo build --release -p karukan-tsf -p karukan-tsf-loader --offline
 if ($LASTEXITCODE -ne 0) { "BUILD-FAILED tsf exit=$LASTEXITCODE"; exit 1 }
 
 $dir = Join-Path $Target 'release'
