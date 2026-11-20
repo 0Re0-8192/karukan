@@ -283,7 +283,7 @@ while step < total:
         log("STOP file found")
         break
     if step % 50 == 0:
-        wait_for_room(a.vram_gb)
+        wait_for_room(torch.cuda.max_memory_allocated() / 2**30 + a.min_free_gb if dev == "cuda" else 0)   # what the run has needed so far, plus a margin
     lr = a.lr * min(1.0, (step + 1) / a.warmup) * (0.1 + 0.9 * 0.5 * (1 + math.cos(math.pi * step / total)))
     for g in opt.param_groups:
         g["lr"] = lr
