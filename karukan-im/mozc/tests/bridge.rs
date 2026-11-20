@@ -157,6 +157,20 @@ fn flick_request_table_disables_claiming() {
 }
 
 #[test]
+fn gboard_qwerty_table_is_claimed() {
+    // Gboard's QWERTY romaji keyboard sends QWERTY_MOBILE_TO_HIRAGANA (20).
+    let mut b = bridge();
+    let mut w = W::new();
+    w.message(1, |i| {
+        i.uint(1, 17);
+        i.message(9, |r| r.int(4, 20));
+    });
+    assert!(b.handle(&w.0).is_none());
+    b.backend().queue.push_back(composing("き", &[]));
+    assert!(b.handle(&key_cmd(3, |k| k.uint(1, 'k' as u64))).is_some());
+}
+
+#[test]
 fn mozc_composition_keeps_ownership() {
     let mut b = bridge();
     // Mozc replies with a preedit

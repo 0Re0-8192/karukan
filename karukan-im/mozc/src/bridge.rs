@@ -114,7 +114,7 @@ impl<B: Backend> Bridge<B> {
         !self.mozc_active
             && self.ime_on
             && self.mode == input::MODE_HIRAGANA
-            && self.table == 0
+            && input::is_qwerty_romaji_table(self.table)
             && self.is_ready()
     }
 

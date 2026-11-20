@@ -189,6 +189,12 @@ pub fn keysym(k: &Key) -> Option<u32> {
     Some(if c < 0x100 { c } else { 0x0100_0000 + c })
 }
 
+/// `SpecialRomanjiTable` values that are plain QWERTY romaji: DEFAULT_TABLE (0) and Gboard's
+/// QWERTY_MOBILE_TO_HIRAGANA (20). Flick / 12-key tables stay with Mozc.
+pub fn is_qwerty_romaji_table(t: u32) -> bool {
+    t == 0 || t == 20
+}
+
 /// A plain printable ASCII key that starts a romaji composition.
 pub fn is_romaji_start(k: &Key) -> bool {
     if k.special.is_some_and(|s| s != 0) {
