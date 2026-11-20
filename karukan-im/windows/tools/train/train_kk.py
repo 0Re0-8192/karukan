@@ -39,6 +39,8 @@ ap.add_argument("--eval-every", type=int, default=500)
 ap.add_argument("--holdout-mine", type=int, default=300, help="first N rows of the `mine` source are never trained on")
 ap.add_argument("--seed", type=int, default=1)
 ap.add_argument("--threads", type=int, default=8)
+ap.add_argument("--attn", default=None, help="attention implementation (sdpa / eager / flash_attention_2); default: the library's")
+ap.add_argument("--compile", action="store_true", help="torch.compile the transformer body")
 a = ap.parse_args()
 os.makedirs(a.out, exist_ok=True)
 torch.set_num_threads(a.threads)
@@ -183,9 +185,16 @@ def free_gb():
         return 99.0
 
 
+def own_gb():
+    return torch.cuda.memory_reserved() / 2**30 if dev == "cuda" and torch.cuda.is_initialized() else 0.0
+
+
 def wait_for_room(need):
+    """Pause while the GPU, counting what this process itself already holds, has less than
+    `need` GB to give. (Counting only the free memory made a run starve itself: its own cache
+    filled the card and the loop waited for 'other programs' that were not there.)"""
     shown = False
-    while dev == "cuda" and free_gb() < need:
+    while dev == "cuda" and free_gb() + own_gb() < need:
         if not shown:
             log(f"VRAM free {free_gb():.1f} GB < {need:.1f}: waiting for the other programs")
             shown = True
@@ -197,7 +206,9 @@ def wait_for_room(need):
 wait_for_room(a.vram_gb + 0.3)
 ck = os.path.join(a.out, "ckpt")
 resume = os.path.exists(os.path.join(ck, "state.json"))
-model = AutoModelForCausalLM.from_pretrained(ck if resume else a.model, dtype=torch.float32).to(dev)
+model = AutoModelForCausalLM.from_pretrained(ck if resume else a.model, dtype=torch.float32,
+                                             **({"attn_implementation": a.attn} if a.attn else {})).to(dev)
+log("attn", getattr(model.config, "_attn_implementation", "?"))
 model.config.use_cache = False
 opt = torch.optim.AdamW(model.parameters(), lr=a.lr, betas=(0.9, 0.95), weight_decay=0.01, fused=(dev == "cuda"))
 step = 0
@@ -248,10 +259,13 @@ def evaluate():
 CAP = getattr(model.config, "final_logit_softcapping", None)
 
 
+body = torch.compile(model.model) if a.compile else model.model
+
+
 def out_loss(ids, att, lab):
     """Cross-entropy on the output positions only: the output layer (60k wide) is applied
     to just those rows instead of every position, which is most of the memory otherwise."""
-    h = model.model(input_ids=ids, attention_mask=att).last_hidden_state[:, :-1]
+    h = body(input_ids=ids, attention_mask=att).last_hidden_state[:, :-1]
     tgt = lab[:, 1:]
     m = tgt != -100
     lg = model.lm_head(h[m]).float()
@@ -269,31 +283,32 @@ while step < total:
         log("STOP file found")
         break
     if step % 50 == 0:
-        wait_for_room(a.min_free_gb)
+        wait_for_room(a.vram_gb)
     lr = a.lr * min(1.0, (step + 1) / a.warmup) * (0.1 + 0.9 * 0.5 * (1 + math.cos(math.pi * step / total)))
     for g in opt.param_groups:
         g["lr"] = lr
     loss_sum = 0.0
     group = next(groups)
     n_out = sum(int((lab[:, 1:] != -100).sum()) for _, _, lab in group)   # every output token weighs the same, whichever micro-batch it is in
+    n_tok = [int(att.sum()) for _, att, _ in group]
     for ids, att, lab in group:
         t0 = time.perf_counter()
         ids, att, lab = ids.to(dev, non_blocking=True), att.to(dev, non_blocking=True), lab.to(dev, non_blocking=True)
         with torch.autocast(dev, dtype=torch.bfloat16, enabled=(dev == "cuda")):
             loss = out_loss(ids, att, lab) / n_out
         loss.backward()
-        loss_sum += loss.item()
-        tok_seen += int(att.sum())
-        if dev == "cuda":
-            torch.cuda.synchronize()
-        busy = time.perf_counter() - t0
+        loss_sum += loss.detach()        # no per-micro-batch host sync
+        tok_seen += n_tok.pop(0)
         if a.duty < 1.0:
-            time.sleep(busy * (1 / a.duty - 1))
+            if dev == "cuda":
+                torch.cuda.synchronize()
+            time.sleep((time.perf_counter() - t0) * (1 / a.duty - 1))
     torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
     opt.step()
     opt.zero_grad(set_to_none=True)
     step += 1
     if step % 20 == 0:
+        loss_sum = float(loss_sum)
         el = time.time() - t_start
         log(f"step {step}/{total} loss {loss_sum:.4f} lr {lr:.2e} {tok_seen / el:.0f} tok/s  eta {(total - step) * el / max(1, step - 0) / 3600:.2f} h"
             + (f"  vram {torch.cuda.max_memory_allocated() / 2**30:.1f} GB" if dev == "cuda" else ""))
