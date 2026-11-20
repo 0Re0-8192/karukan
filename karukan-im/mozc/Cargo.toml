@@ -1,0 +1,16 @@
+[package]
+name = "karukan-mozc"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Mozc protobuf Command <-> karukan-im engine translation, for embedding karukan in a Mozc-based Android IME"
+
+[lib]
+name = "karukan_mozc"
+
+[dependencies]
+karukan-im.workspace = true
+serde_json.workspace = true

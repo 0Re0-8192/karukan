@@ -25,7 +25,7 @@ tracing.workspace = true
 chrono.workspace = true
 
 # llama.cpp bindings for GGUF inference
-llama-cpp-2 = "0.1"
+llama-cpp-2 = { version = "0.1", default-features = false, features = ["openmp", "common"] }
 yada = "0.7"
 
 # HuggingFace model download

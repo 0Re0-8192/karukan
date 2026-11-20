@@ -1,0 +1,22 @@
+[package]
+name = "karukan-android"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "JNI front for the karukan-im engine: one JSON-RPC line in, one line out (the karukan-imserver protocol), for an Android IME patch"
+
+[lib]
+name = "karukan_jni"
+crate-type = ["cdylib"]
+
+[dependencies]
+karukan-im.workspace = true
+jni = "0.21"
+karukan-mozc.workspace = true
+
+# Link libc++ statically: Gboard does not ship libc++_shared.so.
+[target.'cfg(target_os = "android")'.dependencies]
+llama-cpp-2 = { version = "0.1", default-features = false, features = ["android-static-stdcxx"] }
