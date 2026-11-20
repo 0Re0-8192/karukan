@@ -162,3 +162,27 @@ fn can_be_switched_off() {
     let list = candidates_after_space(&mut engine);
     assert!(list.iter().all(|t| t != "windowsでは"), "{list:?}");
 }
+
+#[test]
+fn backspace_keeps_the_typed_keys_row_after_a_kana_is_deleted() {
+    let mut engine = InputMethodEngine::new();
+    engine.converters.kanji = None;
+    type_str(&mut engine, "kyo");
+    engine.process_key(&press_key(Keysym::BACKSPACE));
+    assert_eq!(engine.preedit().unwrap().text(), "き");
+    assert_eq!(engine.typed_keys(), "ki");
+    type_str(&mut engine, "o");
+    assert_eq!(engine.preedit().unwrap().text(), "きお");
+    assert_eq!(engine.typed_keys(), "kio");
+}
+
+#[test]
+fn backspace_keeps_the_typed_keys_row_down_a_word() {
+    let mut engine = InputMethodEngine::new();
+    engine.converters.kanji = None;
+    type_str(&mut engine, "kaigi");
+    for want in ["kai", "ka", ""] {
+        engine.process_key(&press_key(Keysym::BACKSPACE));
+        assert_eq!(engine.typed_keys(), want, "{:?}", engine.preedit().map(|p| p.text().to_string()));
+    }
+}

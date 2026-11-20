@@ -33,6 +33,7 @@ impl InputMethodEngine {
             return EngineResult::consumed();
         }
         self.raw_keys.pop();
+        self.realign_raw_keys();
 
         if let Some(result) = self.try_reset_if_empty() {
             return result;
@@ -47,6 +48,53 @@ impl InputMethodEngine {
                 .with_action(EngineAction::UpdateAuxText(self.format_aux_composing()));
         }
         self.refresh_input_state()
+    }
+
+    /// After a character-wise Backspace the typed keys may no longer spell the reading
+    /// (`kyo` → き leaves `ky`, which spells ky), and the typed-keys row would vanish.
+    /// Keep the longest run of typed keys that still agrees with the reading and add the
+    /// shortest keys that spell the rest (き → `ki`), so the row follows the Backspace.
+    /// Only for the plain case (kana input, caret at the end, no chunk break, lowercase keys).
+    fn realign_raw_keys(&mut self) {
+        if self.mode.current() != InputMode::Hiragana
+            || !self.chunk_breaks.is_empty()
+            || self.raw_keys.is_empty()
+            || self.input_buf.cursor() != self.input_buf.char_count()
+            || !self.raw_keys.chars().all(|c| c.is_ascii_lowercase() || c == '-')
+        {
+            return;
+        }
+        let romaji = &self.converters.romaji;
+        let target = self.input_buf.settled_reading(romaji);
+        let spell = |k: &str| super::english_mix::with_decimal_points(romaji.convert_flush(k));
+        if spell(&self.raw_keys).eq_ignore_ascii_case(&target) {
+            return;
+        }
+        const KEYS: &[u8] = b"abcdefghijklmnopqrstuvwxyz-";
+        let raw = self.raw_keys.clone();
+        for k in (0..raw.len()).rev() {
+            let head = &raw[..k];
+            if !target.starts_with(&spell(head)) {
+                continue;
+            }
+            if spell(head).eq_ignore_ascii_case(&target) {
+                self.raw_keys = head.to_string();
+                return;
+            }
+            // shortest tail (up to 3 keys) that completes the reading
+            for len in 1..=3usize {
+                for n in 0..KEYS.len().pow(len as u32) {
+                    let tail: String = (0..len)
+                        .map(|d| KEYS[(n / KEYS.len().pow((len - 1 - d) as u32)) % KEYS.len()] as char)
+                        .collect();
+                    let cand = format!("{head}{tail}");
+                    if spell(&cand).eq_ignore_ascii_case(&target) {
+                        self.raw_keys = cand;
+                        return;
+                    }
+                }
+            }
+        }
     }
 
     /// Move caret left within the composition
