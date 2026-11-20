@@ -72,6 +72,8 @@ struct View {
     /// `typed` as drawn: the tail that fits the window, `…` in front of a cut one
     typed_shown: String,
     typed_h: i32,
+    /// The window sits above the composition: the typed keys go at the bottom, next to the text
+    flipped: bool,
     /// The last `show` arguments, so a change to the typed keys or the aux
     /// line can lay the window out again without a new candidate list
     last: Option<(Vec<CandidateItem>, usize, usize, usize)>,
@@ -236,28 +238,31 @@ fn draw(mem: HDC, cw: i32, ch: i32) {
             fill(mem, &RECT { left: 0, top: 0, right: cw, bottom: ch }, pal.bg);
             let old_font = SelectObject(mem, HGDIOBJ(font.0));
             let top0 = px(4, v.scale);
+            let rows_top = top0 + if v.flipped { 0 } else { v.typed_h };
             if v.typed_h > 0 {
-                // the typed keys, a row of their own above the candidates
-                let mut r = RECT {
-                    left: v.pad,
-                    top: top0,
-                    right: cw - v.pad,
-                    bottom: top0 + v.typed_h,
+                // the typed keys, a row of their own on the side nearest the text:
+                // above the candidates, or below them when the window is flipped above the text
+                let ty = if v.flipped {
+                    rows_top + v.rows.len() as i32 * v.row_h + v.footer_h
+                } else {
+                    top0
                 };
+                let mut r = RECT { left: v.pad, top: ty, right: cw - v.pad, bottom: ty + v.typed_h };
                 let flags = (DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX).0;
                 draw_text(mem, &v.typed_shown, &mut r, flags, pal.accent);
+                let ly = if v.flipped { ty } else { ty + v.typed_h - 1 };
                 fill(
                     mem,
                     &RECT {
                         left: px(4, v.scale),
-                        top: top0 + v.typed_h - 1,
+                        top: ly,
                         right: cw - px(4, v.scale),
-                        bottom: top0 + v.typed_h,
+                        bottom: ly + 1,
                     },
                     pal.border,
                 );
             }
-            let top0 = top0 + v.typed_h;
+            let top0 = rows_top;
             for (i, row) in v.rows.iter().enumerate() {
                 let top = top0 + i as i32 * v.row_h;
                 let band = RECT {
@@ -362,7 +367,13 @@ fn ensure_window() -> Option<HWND> {
     }
     unsafe {
         let hinst = GetModuleHandleW(None).ok()?;
-        let class = w!("KarukanCandidateWindow");
+        // One class per loaded copy of this code: after an update an app can hold two copies, and
+        // a shared name would give the new window the old copy's window procedure.
+        let class_name: Vec<u16> = format!("KarukanCandidateWindow_{:x}", wnd_proc as *const () as usize)
+            .encode_utf16()
+            .chain(Some(0))
+            .collect();
+        let class = PCWSTR(class_name.as_ptr());
         let wc = WNDCLASSEXW {
             cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
             style: WNDCLASS_STYLES(CS_DROPSHADOW),
@@ -558,7 +569,9 @@ pub fn show(
                 (r.left, r.top)
             }
         };
+        let mut flipped = VIEW.with(|v| v.borrow().flipped);
         if let Some(a) = &anchor {
+            flipped = false;
             // keep it on screen: flip above the composition near the bottom
             let mon = MonitorFromPoint(POINT { x: a.x, y: a.bottom }, MONITOR_DEFAULTTONEAREST);
             let mut mi = MONITORINFO {
@@ -569,12 +582,14 @@ pub fn show(
                 let work = mi.rcWork;
                 if y + height > work.bottom {
                     y = (a.top - height - px(2, scale)).max(work.top);
+                    flipped = true;
                 }
                 if x + width > work.right {
                     x = (work.right - width).max(work.left);
                 }
             }
         }
+        VIEW.with(|v| v.borrow_mut().flipped = flipped);
         place_log(&anchor, x, y, width, height, dpi);
         let _ = SetWindowPos(
             hwnd,
