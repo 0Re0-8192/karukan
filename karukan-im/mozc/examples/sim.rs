@@ -3,13 +3,19 @@ use karukan_mozc::bridge::{Bridge, ImBackend};
 use karukan_mozc::proto::{self, Val, W};
 use std::time::{Duration, Instant};
 
+/// The text left of the caret that every key carries (Input.context.preceding_text); `SIM_CTX` overrides it.
+fn context() -> String {
+    std::env::var("SIM_CTX").unwrap_or_else(|_| "今日は天気が".into())
+}
+
 fn key(f: impl FnOnce(&mut W)) -> Vec<u8> {
     let mut w = W::new();
+    let ctx = context();
     w.message(1, |i| {
         i.uint(1, 3);
         i.uint(2, 1);
         i.message(3, f);
-        i.message(6, |c| c.string(1, "今日は天気が"));
+        i.message(6, |c| c.string(1, &ctx));
     });
     w.0
 }

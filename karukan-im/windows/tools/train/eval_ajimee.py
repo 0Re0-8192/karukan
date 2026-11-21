@@ -12,6 +12,7 @@ ap = argparse.ArgumentParser()
 ap.add_argument("ckpt")
 ap.add_argument("bench")
 ap.add_argument("--no-context", action="store_true")
+ap.add_argument("--ctx-chars", type=int, default=0, help="keep only the last N context chars, as the engine does (0 = all)")
 ap.add_argument("--device", default="cuda")
 ap.add_argument("--show", type=int, default=15)
 ap.add_argument("--vram-gb", type=float, default=4.0)
@@ -40,6 +41,8 @@ items = [i for i in json.load(open(a.bench, encoding="utf-8")) if i.get("input")
 ok, ok_raw, miss, t0 = 0, 0, [], time.time()
 for it in items:
     ctx = "" if a.no_context else (it.get("context_text") or "")
+    if a.ctx_chars:
+        ctx = ctx[-a.ctx_chars:]  # what the engine hands the model ([conversion] context_chars)
     p = [CTX] + enc(nfkc(ctx)) + [INP] + enc(nfkc(it["input"])) + [OUT]
     x = torch.tensor([p], device=a.device)
     with torch.no_grad():
