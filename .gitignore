@@ -46,3 +46,6 @@ data/
 karukan-im/macos/.build/
 karukan-im/macos/out/
 dist/
+
+# portable Windows zips (karukan-im/windows/tools/package.ps1)
+release/
