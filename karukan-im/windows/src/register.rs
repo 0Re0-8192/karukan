@@ -5,8 +5,8 @@ use windows::Win32::System::Com::{
     CoUninitialize,
 };
 use windows::Win32::System::Registry::{
-    HKEY, HKEY_CLASSES_ROOT, KEY_WRITE, REG_OPTION_NON_VOLATILE, REG_SZ, RegCloseKey,
-    RegCreateKeyExW, RegDeleteTreeW, RegSetValueExW,
+    HKEY, HKEY_CLASSES_ROOT, HKEY_LOCAL_MACHINE, KEY_WRITE, REG_OPTION_NON_VOLATILE, REG_SZ,
+    RegCloseKey, RegCreateKeyExW, RegDeleteTreeW, RegSetValueExW,
 };
 use windows::Win32::UI::TextServices::{
     CLSID_TF_CategoryMgr, CLSID_TF_InputProcessorProfiles, GUID_TFCAT_DISPLAYATTRIBUTEPROVIDER,
@@ -144,6 +144,11 @@ pub fn unregister() -> Result<()> {
         let _ = RegDeleteTreeW(
             HKEY_CLASSES_ROOT,
             PCWSTR(wz(&format!("CLSID\\{}", clsid_string())).as_ptr()),
+        );
+        // UnregisterProfile / UnregisterCategory leave the TIP's key behind, empty
+        let _ = RegDeleteTreeW(
+            HKEY_LOCAL_MACHINE,
+            PCWSTR(wz(&format!("SOFTWARE\\Microsoft\\CTF\\TIP\\{}", clsid_string())).as_ptr()),
         );
     }
     Ok(())

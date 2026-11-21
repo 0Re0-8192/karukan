@@ -48,7 +48,10 @@ fn parse_args() -> Result<Opts> {
                 if it.next().as_deref() != Some("-o") {
                     bail!("pack STAGE_DIR -o OUT.exe");
                 }
-                o.pack = Some((stage, PathBuf::from(it.next().context("pack needs -o OUT.exe")?)));
+                o.pack = Some((
+                    stage,
+                    PathBuf::from(it.next().context("pack needs -o OUT.exe")?),
+                ));
             }
             other => bail!("unknown argument: {other}"),
         }
@@ -114,7 +117,11 @@ fn pack(stage: &Path, out: &Path) -> Result<Option<String>> {
         let mut w = BufWriter::new(File::create(&tmp).with_context(|| tmp.display().to_string())?);
         std::io::copy(&mut File::open(&me)?.take(exe_len), &mut w)?;
         w.flush()?;
-        let mut hashed = HashWriter { inner: w, sha: Sha256::new(), len: 0 };
+        let mut hashed = HashWriter {
+            inner: w,
+            sha: Sha256::new(),
+            len: 0,
+        };
         {
             let mut z = DeflateEncoder::new(&mut hashed, Compression::default());
             for rel in &files {
@@ -136,7 +143,12 @@ fn pack(stage: &Path, out: &Path) -> Result<Option<String>> {
         w.flush()?;
     }
     patient(|| out.display().to_string(), || fs::rename(&tmp, out))?;
-    Ok(Some(format!("{}: {} files, {} MB", out.display(), files.len(), fs::metadata(out)?.len() >> 20)))
+    Ok(Some(format!(
+        "{}: {} files, {} MB",
+        out.display(),
+        files.len(),
+        fs::metadata(out)?.len() >> 20
+    )))
 }
 
 fn collect(root: &Path, dir: &Path, out: &mut Vec<String>) -> Result<()> {
@@ -193,7 +205,10 @@ fn payload_span(exe: &Path) -> Result<Option<(u64, u64, [u8; 32])>> {
 }
 
 /// The payload's entries, after its SHA-256 has been checked: path -> (offset in the stream order).
-fn read_payload(exe: &Path, mut each: impl FnMut(&str, u64, &mut dyn Read) -> Result<()>) -> Result<()> {
+fn read_payload(
+    exe: &Path,
+    mut each: impl FnMut(&str, u64, &mut dyn Read) -> Result<()>,
+) -> Result<()> {
     let (off, len, sha) = payload_span(exe)?.ok_or_else(|| anyhow!("this exe carries no files"))?;
     // check first, write nothing from a damaged download
     let mut f = File::open(exe)?;
@@ -240,7 +255,9 @@ fn version_key(v: &str) -> Vec<u64> {
 }
 
 fn default_dir() -> PathBuf {
-    let base = std::env::var_os("LOCALAPPDATA").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."));
+    let base = std::env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."));
     base.join("Programs").join("karukan")
 }
 
@@ -251,7 +268,9 @@ fn existing_dir() -> Option<PathBuf> {
             return Some(d);
         }
     }
-    sys::com_server_path().and_then(|p| p.parent().map(Path::to_path_buf)).filter(|d| d.join(LOADER).is_file())
+    sys::com_server_path()
+        .and_then(|p| p.parent().map(Path::to_path_buf))
+        .filter(|d| d.join(LOADER).is_file())
 }
 
 fn install(o: &Opts) -> Result<Option<String>> {
@@ -259,13 +278,27 @@ fn install(o: &Opts) -> Result<Option<String>> {
     if payload_span(&me)?.is_none() {
         bail!("this exe carries no files (build one with `pack`)");
     }
-    let found = if o.dir.is_some() { None } else { existing_dir() };
-    let mut dir = o.dir.clone().or_else(|| found.clone()).unwrap_or_else(default_dir);
+    let found = if o.dir.is_some() {
+        None
+    } else {
+        existing_dir()
+    };
+    let mut dir = o
+        .dir
+        .clone()
+        .or_else(|| found.clone())
+        .unwrap_or_else(default_dir);
     let old = load_manifest(&dir);
-    let old_version = old.as_ref().map(|m| m.version.clone()).or_else(|| found.as_ref().map(|_| "?".into()));
+    let old_version = old
+        .as_ref()
+        .map(|m| m.version.clone())
+        .or_else(|| found.as_ref().map(|_| "?".into()));
     if let Some(m) = &old {
         if version_key(&m.version) > version_key(VERSION) {
-            bail!("karukan {} が入っています(このインストーラーは {VERSION})。", m.version);
+            bail!(
+                "karukan {} が入っています(このインストーラーは {VERSION})。",
+                m.version
+            );
         }
     }
     if !o.quiet {
@@ -275,7 +308,14 @@ fn install(o: &Opts) -> Result<Option<String>> {
             sys::Choice::Cancel => return Ok(None),
             sys::Choice::Change => match sys::pick_folder()? {
                 Some(d) => {
-                    dir = if d.file_name().is_some_and(|n| n.eq_ignore_ascii_case("karukan")) { d } else { d.join("karukan") };
+                    dir = if d
+                        .file_name()
+                        .is_some_and(|n| n.eq_ignore_ascii_case("karukan"))
+                    {
+                        d
+                    } else {
+                        d.join("karukan")
+                    };
                     if !sys::confirm_go(VERSION, &dir) {
                         return Ok(None);
                     }
@@ -293,7 +333,10 @@ fn install(o: &Opts) -> Result<Option<String>> {
         let target = dir.join(rel);
         if KEEP_IF_PRESENT.contains(&rel) && target.exists() {
             // still ours to list (or a later update would take it for a file that left the payload)
-            owned.insert(rel.to_string(), old_files.get(rel).cloned().unwrap_or_default());
+            owned.insert(
+                rel.to_string(),
+                old_files.get(rel).cloned().unwrap_or_default(),
+            );
             return Ok(());
         }
         if let Some(p) = target.parent() {
@@ -302,7 +345,11 @@ fn install(o: &Opts) -> Result<Option<String>> {
         let tmp = target.with_file_name(format!("{}.new{stamp}", file_name(&target)));
         let sha = {
             let f = File::create(&tmp).with_context(|| tmp.display().to_string())?;
-            let mut w = HashWriter { inner: BufWriter::new(f), sha: Sha256::new(), len: 0 };
+            let mut w = HashWriter {
+                inner: BufWriter::new(f),
+                sha: Sha256::new(),
+                len: 0,
+            };
             std::io::copy(body, &mut w)?;
             w.flush()?;
             hex(&w.sha.finalize())
@@ -312,7 +359,8 @@ fn install(o: &Opts) -> Result<Option<String>> {
             patient(|| tmp.display().to_string(), || fs::remove_file(&tmp))?; // unchanged
             return Ok(());
         }
-        replace(&tmp, &target, &stamp).with_context(|| format!("could not place {}", target.display()))
+        replace(&tmp, &target, &stamp)
+            .with_context(|| format!("could not place {}", target.display()))
     })?;
     // what the previous version owned and this one does not (old models, old implementation DLLs)
     for rel in old_files.keys().filter(|k| !owned.contains_key(*k)) {
@@ -320,19 +368,40 @@ fn install(o: &Opts) -> Result<Option<String>> {
     }
     sweep_aside(&dir);
     // apps in an AppContainer (Start search, Settings) read the DLLs and models; nothing gets write access
-    let _ = sys::run_hidden("icacls", &[&dir.to_string_lossy(), "/grant", "*S-1-15-2-1:(OI)(CI)(RX)", "/Q"]);
+    let _ = sys::run_hidden(
+        "icacls",
+        &[
+            &dir.to_string_lossy(),
+            "/grant",
+            "*S-1-15-2-1:(OI)(CI)(RX)",
+            "/Q",
+        ],
+    );
     // the uninstaller: this exe without its payload
     if let Some((off, _, _)) = payload_span(&me)? {
         let dst = dir.join(SETUP_EXE);
         if dst != me {
             let tmp = dir.join(format!("{SETUP_EXE}.new{stamp}"));
-            std::io::copy(&mut File::open(&me)?.take(off), &mut File::create(&tmp).with_context(|| tmp.display().to_string())?)?;
+            std::io::copy(
+                &mut File::open(&me)?.take(off),
+                &mut File::create(&tmp).with_context(|| tmp.display().to_string())?,
+            )?;
             replace(&tmp, &dst, &stamp)?;
         }
     }
-    let manifest = Manifest { version: VERSION.into(), files: owned };
-    fs::write(dir.join(MANIFEST), serde_json::to_vec_pretty(&manifest)?).with_context(|| dir.join(MANIFEST).display().to_string())?;
-    let size_kb = manifest.files.keys().filter_map(|r| fs::metadata(dir.join(r)).ok()).map(|m| m.len()).sum::<u64>() >> 10;
+    let manifest = Manifest {
+        version: VERSION.into(),
+        files: owned,
+    };
+    fs::write(dir.join(MANIFEST), serde_json::to_vec_pretty(&manifest)?)
+        .with_context(|| dir.join(MANIFEST).display().to_string())?;
+    let size_kb = manifest
+        .files
+        .keys()
+        .filter_map(|r| fs::metadata(dir.join(r)).ok())
+        .map(|m| m.len())
+        .sum::<u64>()
+        >> 10;
 
     if !o.no_register {
         let loader = dir.join(LOADER);
@@ -347,7 +416,10 @@ fn install(o: &Opts) -> Result<Option<String>> {
     // running servers swap themselves for the new one at the next composition
     let stamp_file = dir.join("data").join("user_english.txt");
     if stamp_file.is_file() {
-        let _ = File::options().write(true).open(&stamp_file).and_then(|f| f.set_modified(SystemTime::now()));
+        let _ = File::options()
+            .write(true)
+            .open(&stamp_file)
+            .and_then(|f| f.set_modified(SystemTime::now()));
     }
     Ok(Some(match old_version {
         Some(v) if v == VERSION || v == "?" => format!("karukan {VERSION} を入れ直しました。"),
@@ -360,7 +432,10 @@ fn install(o: &Opts) -> Result<Option<String>> {
 fn replace(tmp: &Path, target: &Path, stamp: &str) -> Result<()> {
     if target.exists() && fs::remove_file(target).is_err() {
         let aside = target.with_file_name(format!("{}.old{stamp}", file_name(target)));
-        patient(|| target.display().to_string(), || fs::rename(target, &aside))?;
+        patient(
+            || target.display().to_string(),
+            || fs::rename(target, &aside),
+        )?;
     }
     patient(|| target.display().to_string(), || fs::rename(tmp, target))
 }
@@ -407,15 +482,24 @@ fn sweep_aside(dir: &Path) {
 }
 
 fn is_aside(name: &str) -> bool {
-    [".old", ".new"].iter().any(|t| name.rfind(t).is_some_and(|i| name[i + t.len()..].chars().all(|c| c.is_ascii_digit()) && name.len() > i + t.len()))
+    [".old", ".new"].iter().any(|t| {
+        name.rfind(t).is_some_and(|i| {
+            name[i + t.len()..].chars().all(|c| c.is_ascii_digit()) && name.len() > i + t.len()
+        })
+    })
 }
 
 fn file_name(p: &Path) -> String {
-    p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
+    p.file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default()
 }
 
 fn stamp() -> String {
-    let s = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    let s = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
     s.to_string()
 }
 
@@ -446,9 +530,12 @@ fn uninstall(o: &Opts) -> Result<Option<String>> {
     let me = std::env::current_exe()?;
     let dir = match &o.dir {
         Some(d) => d.clone(),
-        None => existing_dir().or_else(|| me.parent().map(Path::to_path_buf)).context("karukan は入っていません。")?,
+        None => existing_dir()
+            .or_else(|| me.parent().map(Path::to_path_buf))
+            .context("karukan は入っていません。")?,
     };
-    let manifest = load_manifest(&dir).context("このフォルダはインストーラーで入れたものではありません(install.json がない)。")?;
+    let manifest = load_manifest(&dir)
+        .context("このフォルダはインストーラーで入れたものではありません(install.json がない)。")?;
     let mut delete_data = o.delete_data;
     if !o.quiet {
         match sys::confirm_uninstall(&dir) {
@@ -484,19 +571,27 @@ fn uninstall(o: &Opts) -> Result<Option<String>> {
     sweep_aside(&dir);
     remove_empty_dirs(&dir);
     // this exe cannot delete itself: a detached cmd does it once we have exited
-    if me.parent() == Some(dir.as_path()) && !o.quiet {
+    if me.parent() == Some(dir.as_path()) {
+        // also what this exe held while it ran (its runtime DLLs, renamed aside above)
         let cmd = format!(
-            "ping -n 3 127.0.0.1 >nul & del /f /q \"{}\" & rmdir \"{}\" 2>nul",
-            me.display(),
-            dir.display()
+            "ping -n 3 127.0.0.1 >nul & del /f /q \"{exe}\" \"{d}\\*.old*\" 2>nul & rmdir \"{d}\" 2>nul",
+            exe = me.display(),
+            d = dir.display()
         );
-        let _ = sys::spawn_detached("cmd.exe", &["/c", &cmd]);
+        let _ = sys::spawn_cmd_detached(&cmd);
     }
-    let kept = if delete_data { "" } else { "学習と設定は残しました。" };
+    let kept = if delete_data {
+        ""
+    } else {
+        "学習と設定は残しました。"
+    };
     Ok(Some(if left.is_empty() {
         format!("karukan を外しました。{kept}")
     } else {
-        format!("karukan を外しました。{kept}使用中のファイルはアプリを閉じたあと消せます({})。", dir.display())
+        format!(
+            "karukan を外しました。{kept}使用中のファイルはアプリを閉じたあと消せます({})。",
+            dir.display()
+        )
     }))
 }
 

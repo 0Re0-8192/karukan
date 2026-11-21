@@ -10,6 +10,7 @@ param(
     [string]$Dist,
     [string]$Out,
     [string]$SmallGguf = 'D:\Projects\train-data\gguf9b_0.5',
+    [string]$Build = 'D:\cargo-target\karukan\release',
     [string]$Setup = 'D:\cargo-target\karukan\release\karukan-setup.exe',
     [switch]$NoZip
 )
@@ -46,13 +47,23 @@ $stage = Join-Path $Out 'karukan'
 if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
 New-Item -ItemType Directory -Force $stage | Out-Null
 
-# 1. program: the loader (the registered DLL), the newest implementation DLL, the server
+# 1. program: the loader (the registered DLL) from the installed dist, so an update that keeps it needs no
+#    admin; the implementation DLL and the server from the build (build.ps1), the DLL under a name of its
+#    build time as install.ps1 names it (an app holding the old one keeps it; new apps load the new one)
 Copy-Item (Join-Path $Dist 'karukan_tsf.dll') $stage
-$impl = Get-ChildItem $Dist -Filter 'karukan_tsf_impl_*.dll' | Sort-Object Name | Select-Object -Last 1
-if (-not $impl) { throw "no karukan_tsf_impl_*.dll in $Dist" }
-Copy-Item $impl.FullName $stage
-Copy-Item (Join-Path $Dist 'karukan-imserver.exe') $stage
+$implSrc = Get-Item (Join-Path $Build 'karukan_tsf.dll')
+Copy-Item $implSrc.FullName (Join-Path $stage ('karukan_tsf_impl_{0}.dll' -f $implSrc.LastWriteTime.ToString('yyMMddHHmmss')))
+Copy-Item (Join-Path $Build 'karukan-imserver.exe') $stage
 New-Item -ItemType File (Join-Path $stage 'portable.flag') | Out-Null
+# the server's C++ runtime, app-local: llama.cpp is built with VS 2022 17.10+, whose std::mutex crashes in
+# an older msvcp140.dll (0xc0000005 seen with 14.28 on a Windows 10 PC). Only the server loads these.
+$redist = Get-ChildItem "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2022\*\VC\Redist\MSVC\14.*\x64" -Directory -ErrorAction SilentlyContinue |
+    Sort-Object { [version]($_.Parent.Name) } | Select-Object -Last 1
+if (-not $redist) { throw 'Visual Studio 2022 VC redist folder not found' }
+foreach ($f in 'Microsoft.VC143.CRT\msvcp140.dll', 'Microsoft.VC143.CRT\vcruntime140.dll', 'Microsoft.VC143.CRT\vcruntime140_1.dll', 'Microsoft.VC143.OpenMP\vcomp140.dll') {
+    Copy-Item (Join-Path $redist.FullName $f) $stage
+}
+"VC runtime from $($redist.FullName)"
 
 # 2. data: the system dictionary only (no learning, no user dictionaries)
 Copy-Checked (Join-Path $Dist 'data\dict.bin') (Join-Path $stage 'data\dict.bin')

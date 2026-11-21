@@ -5,21 +5,27 @@ use std::process::Command;
 
 use anyhow::{Result, bail};
 use windows::Win32::Foundation::{CloseHandle, ERROR_CANCELLED, HWND};
-use windows::Win32::System::Com::{CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx, CoTaskMemFree};
+use windows::Win32::System::Com::{
+    CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx, CoTaskMemFree,
+};
 use windows::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
 use windows::Win32::System::Registry::{
-    HKEY, HKEY_CLASSES_ROOT, HKEY_CURRENT_USER, KEY_WRITE, REG_DWORD, REG_OPTION_NON_VOLATILE, REG_SZ, RRF_RT_REG_SZ,
-    RegCloseKey, RegCreateKeyExW, RegDeleteTreeW, RegGetValueW, RegSetValueExW,
+    HKEY, HKEY_CLASSES_ROOT, HKEY_CURRENT_USER, KEY_WRITE, REG_DWORD, REG_OPTION_NON_VOLATILE,
+    REG_SZ, RRF_RT_REG_SZ, RegCloseKey, RegCreateKeyExW, RegDeleteTreeW, RegGetValueW,
+    RegSetValueExW,
 };
 use windows::Win32::System::Threading::{GetExitCodeProcess, INFINITE, WaitForSingleObject};
 use windows::Win32::UI::Controls::{
-    TASKDIALOG_BUTTON, TASKDIALOGCONFIG, TDCBF_CANCEL_BUTTON, TDF_ALLOW_DIALOG_CANCELLATION, TaskDialogIndirect,
+    TASKDIALOG_BUTTON, TASKDIALOGCONFIG, TDCBF_CANCEL_BUTTON, TDF_ALLOW_DIALOG_CANCELLATION,
+    TaskDialogIndirect,
 };
 use windows::Win32::UI::Shell::{
-    FOS_FORCEFILESYSTEM, FOS_PICKFOLDERS, FileOpenDialog, IFileOpenDialog, IsUserAnAdmin, SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW,
-    SIGDN_FILESYSPATH, ShellExecuteExW,
+    FOS_FORCEFILESYSTEM, FOS_PICKFOLDERS, FileOpenDialog, IFileOpenDialog, IsUserAnAdmin,
+    SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW, SIGDN_FILESYSPATH, ShellExecuteExW,
 };
-use windows::Win32::UI::WindowsAndMessaging::{MB_ICONERROR, MB_ICONINFORMATION, MB_OK, MessageBoxW, SW_HIDE};
+use windows::Win32::UI::WindowsAndMessaging::{
+    MB_ICONERROR, MB_ICONINFORMATION, MB_OK, MessageBoxW, SW_HIDE,
+};
 use windows::core::{BOOL, PCWSTR, s, w};
 
 const CLSID: &str = "{4B9F6E5A-1D3C-4C7E-9A52-8E21F0C7A311}";
@@ -32,7 +38,11 @@ fn wide(s: &str) -> Vec<u16> {
 
 pub fn message(title: &str, text: &str, error: bool) {
     let (t, x) = (wide(title), wide(text));
-    let icon = if error { MB_ICONERROR } else { MB_ICONINFORMATION };
+    let icon = if error {
+        MB_ICONERROR
+    } else {
+        MB_ICONINFORMATION
+    };
     unsafe {
         MessageBoxW(None, PCWSTR(x.as_ptr()), PCWSTR(t.as_ptr()), MB_OK | icon);
     }
@@ -48,13 +58,21 @@ const ID_GO: i32 = 100;
 const ID_CHANGE: i32 = 101;
 
 /// Runs a task dialog with the given buttons (id, label) plus Cancel; returns the button and the checkbox.
-fn task_dialog(main: &str, content: &str, buttons: &[(i32, &str)], check: Option<&str>) -> (i32, bool) {
+fn task_dialog(
+    main: &str,
+    content: &str,
+    buttons: &[(i32, &str)],
+    check: Option<&str>,
+) -> (i32, bool) {
     let (title, main, content) = (wide("karukan"), wide(main), wide(content));
     let labels: Vec<Vec<u16>> = buttons.iter().map(|(_, l)| wide(l)).collect();
     let btns: Vec<TASKDIALOG_BUTTON> = buttons
         .iter()
         .zip(&labels)
-        .map(|((id, _), l)| TASKDIALOG_BUTTON { nButtonID: *id, pszButtonText: PCWSTR(l.as_ptr()) })
+        .map(|((id, _), l)| TASKDIALOG_BUTTON {
+            nButtonID: *id,
+            pszButtonText: PCWSTR(l.as_ptr()),
+        })
         .collect();
     let check_w = check.map(wide);
     let cfg = TASKDIALOGCONFIG {
@@ -67,7 +85,9 @@ fn task_dialog(main: &str, content: &str, buttons: &[(i32, &str)], check: Option
         cButtons: btns.len() as u32,
         pButtons: btns.as_ptr(),
         nDefaultButton: buttons.first().map_or(0, |b| b.0),
-        pszVerificationText: check_w.as_ref().map_or(PCWSTR::null(), |c| PCWSTR(c.as_ptr())),
+        pszVerificationText: check_w
+            .as_ref()
+            .map_or(PCWSTR::null(), |c| PCWSTR(c.as_ptr())),
         ..Default::default()
     };
     let mut pressed = 0i32;
@@ -86,7 +106,11 @@ pub fn confirm_install(version: &str, old: Option<&str>, dir: &Path, can_change:
         Some(_) => format!("karukan を {version} に更新"),
         None => format!("karukan {version} をインストール"),
     };
-    let go = if can_change { "インストール" } else { "更新" };
+    let go = if can_change {
+        "インストール"
+    } else {
+        "更新"
+    };
     let mut buttons = vec![(ID_GO, go)];
     if can_change {
         buttons.push((ID_CHANGE, "場所を変える"));
@@ -100,13 +124,23 @@ pub fn confirm_install(version: &str, old: Option<&str>, dir: &Path, can_change:
 
 pub fn confirm_go(version: &str, dir: &Path) -> bool {
     let main = format!("karukan {version} をインストール");
-    task_dialog(&main, &dir.display().to_string(), &[(ID_GO, "インストール")], None).0 == ID_GO
+    task_dialog(
+        &main,
+        &dir.display().to_string(),
+        &[(ID_GO, "インストール")],
+        None,
+    )
+    .0 == ID_GO
 }
 
 /// Some(delete learning and settings too) or None when cancelled.
 pub fn confirm_uninstall(dir: &Path) -> Option<bool> {
-    let (b, checked) =
-        task_dialog("karukan を外す", &dir.display().to_string(), &[(ID_GO, "外す")], Some("学習と設定も消す"));
+    let (b, checked) = task_dialog(
+        "karukan を外す",
+        &dir.display().to_string(),
+        &[(ID_GO, "外す")],
+        Some("学習と設定も消す"),
+    );
     (b == ID_GO).then_some(checked)
 }
 
@@ -127,11 +161,21 @@ pub fn pick_folder() -> Result<Option<PathBuf>> {
 
 fn reg_string(root: HKEY, sub: &str, value: Option<&str>) -> Option<String> {
     let (sub, value) = (wide(sub), value.map(wide));
-    let vp = value.as_ref().map_or(PCWSTR::null(), |v| PCWSTR(v.as_ptr()));
+    let vp = value
+        .as_ref()
+        .map_or(PCWSTR::null(), |v| PCWSTR(v.as_ptr()));
     let mut buf = vec![0u16; 1024];
     let mut len = (buf.len() * 2) as u32;
     let r = unsafe {
-        RegGetValueW(root, PCWSTR(sub.as_ptr()), vp, RRF_RT_REG_SZ, None, Some(buf.as_mut_ptr() as _), Some(&mut len))
+        RegGetValueW(
+            root,
+            PCWSTR(sub.as_ptr()),
+            vp,
+            RRF_RT_REG_SZ,
+            None,
+            Some(buf.as_mut_ptr() as _),
+            Some(&mut len),
+        )
     };
     if r.is_err() {
         return None;
@@ -142,7 +186,12 @@ fn reg_string(root: HKEY, sub: &str, value: Option<&str>) -> Option<String> {
 
 /// The DLL the text service's class is registered to (HKCR\CLSID\{...}\InprocServer32).
 pub fn com_server_path() -> Option<PathBuf> {
-    reg_string(HKEY_CLASSES_ROOT, &format!(r"CLSID\{CLSID}\InprocServer32"), None).map(PathBuf::from)
+    reg_string(
+        HKEY_CLASSES_ROOT,
+        &format!(r"CLSID\{CLSID}\InprocServer32"),
+        None,
+    )
+    .map(PathBuf::from)
 }
 
 pub fn app_install_location() -> Option<PathBuf> {
@@ -153,8 +202,18 @@ pub fn write_app_entry(dir: &Path, version: &str, size_kb: u64) -> Result<()> {
     let sub = wide(APP_KEY);
     let mut key = HKEY::default();
     unsafe {
-        RegCreateKeyExW(HKEY_CURRENT_USER, PCWSTR(sub.as_ptr()), None, PCWSTR::null(), REG_OPTION_NON_VOLATILE, KEY_WRITE, None, &mut key, None)
-            .ok()?;
+        RegCreateKeyExW(
+            HKEY_CURRENT_USER,
+            PCWSTR(sub.as_ptr()),
+            None,
+            PCWSTR::null(),
+            REG_OPTION_NON_VOLATILE,
+            KEY_WRITE,
+            None,
+            &mut key,
+            None,
+        )
+        .ok()?;
     }
     let exe = dir.join("karukan-setup.exe");
     let strings = [
@@ -162,7 +221,10 @@ pub fn write_app_entry(dir: &Path, version: &str, size_kb: u64) -> Result<()> {
         ("DisplayVersion", version.to_string()),
         ("Publisher", "karukan".to_string()),
         ("InstallLocation", dir.display().to_string()),
-        ("UninstallString", format!("\"{}\" --uninstall", exe.display())),
+        (
+            "UninstallString",
+            format!("\"{}\" --uninstall", exe.display()),
+        ),
         ("DisplayIcon", exe.display().to_string()),
     ];
     let result = (|| -> Result<()> {
@@ -171,9 +233,22 @@ pub fn write_app_entry(dir: &Path, version: &str, size_kb: u64) -> Result<()> {
             let bytes = unsafe { std::slice::from_raw_parts(v.as_ptr() as *const u8, v.len() * 2) };
             unsafe { RegSetValueExW(key, PCWSTR(n.as_ptr()), None, REG_SZ, Some(bytes)).ok()? };
         }
-        for (name, v) in [("NoModify", 1u32), ("NoRepair", 1), ("EstimatedSize", size_kb.min(u32::MAX as u64) as u32)] {
+        for (name, v) in [
+            ("NoModify", 1u32),
+            ("NoRepair", 1),
+            ("EstimatedSize", size_kb.min(u32::MAX as u64) as u32),
+        ] {
             let n = wide(name);
-            unsafe { RegSetValueExW(key, PCWSTR(n.as_ptr()), None, REG_DWORD, Some(&v.to_le_bytes())).ok()? };
+            unsafe {
+                RegSetValueExW(
+                    key,
+                    PCWSTR(n.as_ptr()),
+                    None,
+                    REG_DWORD,
+                    Some(&v.to_le_bytes()),
+                )
+                .ok()?
+            };
         }
         Ok(())
     })();
@@ -200,13 +275,20 @@ pub fn regsvr32(dll: &Path, unregister: bool) -> Result<()> {
         }
         args.push("/s".into());
         args.push(dll.display().to_string());
-        let st = Command::new("regsvr32.exe").args(&args).creation_flags(CREATE_NO_WINDOW).status()?;
+        let st = Command::new("regsvr32.exe")
+            .args(&args)
+            .creation_flags(CREATE_NO_WINDOW)
+            .status()?;
         if !st.success() {
             bail!("regsvr32 が失敗しました({st})");
         }
         return Ok(());
     }
-    let params = wide(&format!("{}/s \"{}\"", if unregister { "/u " } else { "" }, dll.display()));
+    let params = wide(&format!(
+        "{}/s \"{}\"",
+        if unregister { "/u " } else { "" },
+        dll.display()
+    ));
     let mut info = SHELLEXECUTEINFOW {
         cbSize: std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
         fMask: SEE_MASK_NOCLOSEPROCESS,
@@ -240,7 +322,9 @@ pub fn install_layout_or_tip(add: bool) -> Result<()> {
     let spec = wide(&format!("0411:{CLSID}{PROFILE}"));
     unsafe {
         let lib = LoadLibraryW(w!("input.dll"))?;
-        let Some(f) = GetProcAddress(lib, s!("InstallLayoutOrTip")) else { bail!("InstallLayoutOrTip が見つかりません") };
+        let Some(f) = GetProcAddress(lib, s!("InstallLayoutOrTip")) else {
+            bail!("InstallLayoutOrTip が見つかりません")
+        };
         let f: F = std::mem::transmute(f);
         // flags: 0 = add, 1 (ILOT_UNINSTALL) = remove
         if !f(PCWSTR(spec.as_ptr()), if add { 0 } else { 1 }).as_bool() && add {
@@ -266,8 +350,13 @@ pub fn run_hidden(exe: &str, args: &[&str]) -> Result<()> {
     Ok(())
 }
 
-pub fn spawn_detached(exe: &str, args: &[&str]) -> Result<()> {
-    Command::new(exe).args(args).creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS).spawn()?;
+/// Starts `cmd.exe /c <line>` that outlives this process. The line goes verbatim: cmd does not read the
+/// `\"` escaping that Command gives an argument with quotes in it.
+pub fn spawn_cmd_detached(line: &str) -> Result<()> {
+    Command::new("cmd.exe")
+        .raw_arg(format!("/c {line}"))
+        .creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS)
+        .spawn()?;
     Ok(())
 }
 
