@@ -62,7 +62,36 @@ pub struct Bridge<B: Backend> {
     frame: Frame,
     /// Text committed by the engine that must be prepended to Mozc's next reply.
     pending: Option<String>,
+    /// Hybrid mode: while karukan owns a composition, Mozc is fed the same keys in the background and
+    /// the candidates it offers (symbols, emoji, ...) are appended to karukan's own.
+    hybrid: bool,
+    /// Mozc holds a background composition that has to be reverted when the karukan one ends.
+    shadow: bool,
+    plan: ShadowPlan,
+    /// Candidates taken from Mozc, in the order they follow karukan's candidates.
+    extras: Vec<(String, Option<String>)>,
+    /// Mozc session of the last mirrored key.
+    session: Option<u64>,
+    /// Arguments of the last reply, to build it again with other candidates.
+    last: Option<LastReply>,
 }
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum ShadowPlan {
+    None,
+    Key,
+    Revert,
+}
+
+struct LastReply {
+    raw: Vec<u8>,
+    id: Option<u64>,
+    consumed: bool,
+    result: Option<String>,
+}
+
+/// The most candidates taken from Mozc.
+const MAX_EXTRAS: usize = 24;
 
 impl<B: Backend> Bridge<B> {
     pub fn new(be: B) -> Self {
@@ -77,7 +106,18 @@ impl<B: Backend> Bridge<B> {
             started_init: false,
             frame: Frame::default(),
             pending: None,
+            hybrid: true,
+            shadow: false,
+            plan: ShadowPlan::None,
+            extras: Vec::new(),
+            session: None,
+            last: None,
         }
+    }
+
+    /// Turn the Mozc candidates on or off. Off: karukan's candidates only.
+    pub fn set_hybrid(&mut self, on: bool) {
+        self.hybrid = on;
     }
 
     pub fn backend(&mut self) -> &mut B {
@@ -146,8 +186,42 @@ impl<B: Backend> Bridge<B> {
         self.frame = Frame::default();
     }
 
-    fn reply(&self, raw: &[u8], inp: &Input, consumed: bool, result: Option<&str>) -> Vec<u8> {
-        output::encode_command(raw, inp.id, consumed, result, &self.frame)
+    fn reply(&mut self, raw: &[u8], inp: &Input, consumed: bool, result: Option<&str>) -> Vec<u8> {
+        if !self.active {
+            self.extras.clear();
+        }
+        self.last = Some(LastReply {
+            raw: raw.to_vec(),
+            id: inp.id,
+            consumed,
+            result: result.map(str::to_string),
+        });
+        output::encode_command(raw, inp.id, consumed, result, &self.merged_frame())
+    }
+
+    /// How many of the shown candidates are karukan's (the rest come from Mozc).
+    fn own_count(&self) -> usize {
+        self.frame.cands.as_ref().map_or(0, |c| c.items.len())
+    }
+
+    /// The frame as shown: karukan's candidates followed by those of Mozc.
+    fn merged_frame(&self) -> Frame {
+        let mut f = self.frame.clone();
+        if self.extras.is_empty() || !self.active {
+            return f;
+        }
+        match f.cands.as_mut() {
+            Some(c) => c.items.extend(self.extras.iter().cloned()),
+            None => {
+                f.cands = Some(CandView {
+                    items: self.extras.clone(),
+                    cursor: 0,
+                    page: 0,
+                    total_pages: 1,
+                })
+            }
+        }
+        f
     }
 
     fn on_key(&mut self, raw: &[u8], inp: &Input) -> Option<Vec<u8>> {
@@ -287,9 +361,15 @@ impl<B: Backend> Bridge<B> {
             }
             SC_SELECT_CANDIDATE | SC_SUBMIT_CANDIDATE => {
                 let idx = cmd.id.filter(|i| *i >= 0).unwrap_or(0) as usize;
-                let n = self.frame.cands.as_ref().map_or(0, |c| c.items.len());
+                let n = self.own_count();
                 if idx >= n {
-                    return Some(self.reply(raw, inp, true, None));
+                    // A candidate of Mozc: commit it as it is and end the composition.
+                    let Some((text, _)) = self.extras.get(idx - n).cloned() else {
+                        return Some(self.reply(raw, inp, true, None));
+                    };
+                    self.drop_composition();
+                    self.extras.clear();
+                    return Some(self.reply(raw, inp, true, Some(&text)));
                 }
                 let res = self.be.call("select_candidate", json!({"page_index": idx}))?;
                 let (consumed, text) = self.apply(&res);
@@ -325,6 +405,102 @@ impl<B: Backend> Bridge<B> {
             }
             _ => Some(self.reply(raw, inp, true, None)),
         }
+    }
+
+    /// After [`Bridge::handle`] answered `bytes`: the command to give Mozc in the background, if any.
+    /// A key of a karukan composition is mirrored; when the composition has ended, Mozc is told to revert.
+    /// Hand Mozc's answer to [`Bridge::shadow_reply`].
+    pub fn shadow_command(&mut self, bytes: &[u8]) -> Option<Vec<u8>> {
+        self.plan = ShadowPlan::None;
+        if !self.hybrid {
+            return None;
+        }
+        let (_, inp) = input::decode_command_input(bytes)?;
+        let press = inp.ty == input::SEND_KEY && inp.key.as_ref().is_some_and(|k| !k.is_release());
+        if self.active && press {
+            self.session = inp.id.or(self.session);
+            self.plan = ShadowPlan::Key;
+            return Some(bytes.to_vec());
+        }
+        if !self.active && self.shadow {
+            self.plan = ShadowPlan::Revert;
+            return Some(self.revert_command(inp.id));
+        }
+        None
+    }
+
+    /// Mozc's answer to the command of [`Bridge::shadow_command`]. Returns the karukan reply with the
+    /// candidates of Mozc added, or `None` to keep it as it is.
+    pub fn shadow_reply(&mut self, mozc_reply: &[u8]) -> Option<Vec<u8>> {
+        let plan = std::mem::replace(&mut self.plan, ShadowPlan::None);
+        match plan {
+            ShadowPlan::Revert => {
+                self.shadow = false;
+                self.extras.clear();
+                None
+            }
+            ShadowPlan::Key => {
+                let (found, composing) = mozc_candidates(mozc_reply);
+                self.shadow = composing;
+                let mut extras: Vec<(String, Option<String>)> = Vec::new();
+                if composing {
+                    let own: Vec<&str> = self
+                        .frame
+                        .cands
+                        .iter()
+                        .flat_map(|c| c.items.iter().map(|i| i.0.as_str()))
+                        .collect();
+                    for (text, desc) in found {
+                        if text.is_empty() || own.contains(&text.as_str()) || extras.iter().any(|e| e.0 == text) {
+                            continue;
+                        }
+                        extras.push((text, desc));
+                        if extras.len() >= MAX_EXTRAS {
+                            break;
+                        }
+                    }
+                }
+                self.extras = extras;
+                let last = self.last.as_ref()?;
+                Some(output::encode_command(
+                    &last.raw,
+                    last.id,
+                    last.consumed,
+                    last.result.as_deref(),
+                    &self.merged_frame(),
+                ))
+            }
+            ShadowPlan::None => None,
+        }
+    }
+
+    /// Before `bytes` goes to Mozc for real (karukan did not take it): the command that clears the
+    /// background composition first, if there is one and `bytes` could touch it.
+    pub fn shadow_revert(&mut self, bytes: &[u8]) -> Option<Vec<u8>> {
+        if !self.shadow {
+            return None;
+        }
+        let (_, inp) = input::decode_command_input(bytes)?;
+        let harmless = inp.ty == input::TEST_SEND_KEY
+            || (inp.ty == input::SEND_KEY && inp.key.as_ref().is_some_and(|k| k.is_release()));
+        if harmless {
+            return None;
+        }
+        self.shadow = false;
+        self.extras.clear();
+        Some(self.revert_command(inp.id))
+    }
+
+    fn revert_command(&self, id: Option<u64>) -> Vec<u8> {
+        let mut w = proto::W::new();
+        w.message(1, |i| {
+            i.uint(1, input::SEND_COMMAND as u64);
+            if let Some(id) = id.or(self.session) {
+                i.uint(2, id);
+            }
+            i.message(4, |c| c.uint(1, input::SC_REVERT as u64));
+        });
+        w.0
     }
 
     /// Called after Mozc handled `bytes`; returns a replacement reply when the bridge has to
@@ -370,4 +546,33 @@ impl<B: Backend> Bridge<B> {
         let text = self.pending.take()?;
         output::inject_result(mozc_reply, &text)
     }
+}
+
+/// The candidates of a Mozc reply (`Output.all_candidate_words`: value in field 4, annotation
+/// description in field 5.3) and whether Mozc has a composition (`Output.preedit`, field 5).
+fn mozc_candidates(reply: &[u8]) -> (Vec<(String, Option<String>)>, bool) {
+    let Some(top) = proto::parse(reply) else {
+        return (Vec::new(), false);
+    };
+    let Some(out) = proto::get(&top, 2).and_then(|v| v.as_bytes()).and_then(proto::parse) else {
+        return (Vec::new(), false);
+    };
+    let composing = proto::get(&out, 5).is_some();
+    let mut found = Vec::new();
+    if let Some(list) = proto::get(&out, 14).and_then(|v| v.as_bytes()).and_then(proto::parse) {
+        for (f, v) in &list {
+            if *f != 2 {
+                continue;
+            }
+            let Some(c) = v.as_bytes().and_then(proto::parse) else { continue };
+            let Some(text) = proto::get(&c, 4).and_then(|v| v.as_str()) else { continue };
+            let desc = proto::get(&c, 5)
+                .and_then(|v| v.as_bytes())
+                .and_then(proto::parse)
+                .and_then(|a| proto::get(&a, 3).and_then(|v| v.as_str()))
+                .filter(|d| !d.is_empty());
+            found.push((text, desc));
+        }
+    }
+    (found, composing)
 }

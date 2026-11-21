@@ -5,6 +5,7 @@
 //! * `handle(command)` takes the serialized Mozc `Command` Gboard is about to send to Mozc and
 //!   returns the reply when karukan owns the input, or `null` to let Mozc run it.
 //! * `observe(command, mozcReply)` reports what Mozc answered; returns an amended reply or `null`.
+//! * `shadowCommand` / `shadowReply` / `shadowRevert` / `setHybrid`: the Mozc candidates added to karukan's (hybrid).
 #![cfg(target_os = "android")]
 
 use std::sync::Mutex;
@@ -81,4 +82,67 @@ pub extern "system" fn Java_app_re0_extension_gboard_KarukanNative_observe(
     .ok()
     .flatten();
     ret(&env, out)
+}
+
+/// After `handle` answered `command`: the command to give Mozc in the background (a mirrored key, or
+/// a revert when the karukan composition has ended), or `null`.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_app_re0_extension_gboard_KarukanNative_shadowCommand(
+    env: JNIEnv,
+    _class: JClass,
+    command: JByteArray,
+) -> jbyteArray {
+    let cmd = bytes(&env, &command);
+    let out = std::panic::catch_unwind(|| {
+        BRIDGE.lock().ok()?.as_mut().and_then(|b| b.shadow_command(&cmd))
+    })
+    .ok()
+    .flatten();
+    ret(&env, out)
+}
+
+/// Mozc's answer to the background command: the karukan reply with Mozc's candidates added, or `null`.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_app_re0_extension_gboard_KarukanNative_shadowReply(
+    env: JNIEnv,
+    _class: JClass,
+    mozc_reply: JByteArray,
+) -> jbyteArray {
+    let rep = bytes(&env, &mozc_reply);
+    let out = std::panic::catch_unwind(|| {
+        BRIDGE.lock().ok()?.as_mut().and_then(|b| b.shadow_reply(&rep))
+    })
+    .ok()
+    .flatten();
+    ret(&env, out)
+}
+
+/// Before `command` goes to Mozc for real: the command that clears the background composition first, or `null`.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_app_re0_extension_gboard_KarukanNative_shadowRevert(
+    env: JNIEnv,
+    _class: JClass,
+    command: JByteArray,
+) -> jbyteArray {
+    let cmd = bytes(&env, &command);
+    let out = std::panic::catch_unwind(|| {
+        BRIDGE.lock().ok()?.as_mut().and_then(|b| b.shadow_revert(&cmd))
+    })
+    .ok()
+    .flatten();
+    ret(&env, out)
+}
+
+/// Turns the Mozc candidates on (`true`, the default) or off.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_app_re0_extension_gboard_KarukanNative_setHybrid(
+    _env: JNIEnv,
+    _class: JClass,
+    on: jni::sys::jboolean,
+) {
+    if let Ok(mut g) = BRIDGE.lock() {
+        if let Some(b) = g.as_mut() {
+            b.set_hybrid(on != 0);
+        }
+    }
 }

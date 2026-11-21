@@ -15,6 +15,8 @@ impl Backend for Fake {
         self.calls.push(format!("{method} {params}"));
         match method {
             "status" => Some(json!({"initialized": true, "model_name": "m", "state": self.state})),
+            // The throwaway key that makes the engine pick up its model (Bridge::is_ready).
+            "process_key" if params["keysym"] == 97 => Some(json!({})),
             "process_key" | "commit" | "select_candidate" => {
                 let r = self.queue.pop_front()?;
                 self.state = if r["_state"].is_string() {
