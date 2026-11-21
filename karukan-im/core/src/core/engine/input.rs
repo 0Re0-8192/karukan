@@ -462,7 +462,7 @@ impl InputMethodEngine {
                 .with_action(EngineAction::HideAuxText);
         }
 
-        self.record_learning(&reading, &text);
+        self.record_live_learning(&reading, &text);
         self.note_live_commit(&reading, &text);
         self.end_composition();
 

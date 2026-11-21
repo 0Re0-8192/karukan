@@ -12,6 +12,9 @@ use super::*;
 /// Maximum number of learning candidates to show
 const MAX_LEARNING_CANDIDATES: usize = 3;
 
+/// Longest reading (kana) whose live-conversion commit is still learned.
+const MAX_LIVE_LEARNING_READING_CHARS: usize = 8;
+
 /// Max predictive (prefix-extending) dictionary candidates in the
 /// composing suggestion list. The conversion list is uncapped — the full
 /// ranked set goes into the paged candidate window.
@@ -831,6 +834,19 @@ impl InputMethodEngine {
         if let Some(cache) = &mut self.learning {
             cache.record(reading, surface);
         }
+    }
+
+    /// Record an Enter on the live-converted preedit. The user accepted
+    /// whatever the model showed, right or wrong, so a long one is not
+    /// learned: it would come back as the first candidate for exactly that
+    /// reading, ahead of the model, and keep a wrong answer for good. Only
+    /// word-length readings are kept (their use still orders short words);
+    /// a deliberate pick from the candidate list is learned as before.
+    pub(super) fn record_live_learning(&mut self, reading: &str, surface: &str) {
+        if reading.chars().count() > MAX_LIVE_LEARNING_READING_CHARS {
+            return;
+        }
+        self.record_learning(reading, surface);
     }
 
     /// Record the committed conversion in the learning cache and end the

@@ -741,7 +741,7 @@ impl InputMethodEngine {
             InputState::Empty => String::new(),
             InputState::Composing { .. } => {
                 let (reading, text) = self.resolve_composing_commit();
-                self.record_learning(&reading, &text);
+                self.record_live_learning(&reading, &text);
                 self.note_live_commit(&reading, &text);
                 self.end_composition();
                 text

@@ -465,3 +465,38 @@ fn space_key_keeps_learning_in_composing() {
         texts,
     );
 }
+
+#[test]
+fn enter_on_a_long_live_conversion_is_not_learned() {
+    // Accepting the live-converted preedit teaches nothing: a sentence-length
+    // one would head the candidates for exactly that reading, ahead of the
+    // model, and keep a wrong answer for good.
+    let mut engine = engine_with_learned("あい", "藍");
+    for ch in "aiueoaiueo".chars() {
+        engine.process_key(&press(ch));
+    }
+    assert_eq!(engine.input_buf.reading(), "あいうえおあいうえお");
+    engine.process_key(&press_key(Keysym::RETURN));
+    assert!(
+        engine
+            .learning
+            .as_ref()
+            .unwrap()
+            .lookup("あいうえおあいうえお")
+            .is_empty(),
+        "a long live commit must not enter the learning cache"
+    );
+}
+
+#[test]
+fn enter_on_a_short_live_conversion_is_still_learned() {
+    let mut engine = engine_with_learned("あい", "藍");
+    for ch in "ue".chars() {
+        engine.process_key(&press(ch));
+    }
+    engine.process_key(&press_key(Keysym::RETURN));
+    assert!(
+        !engine.learning.as_ref().unwrap().lookup("うえ").is_empty(),
+        "a word-length live commit is learned as before"
+    );
+}
