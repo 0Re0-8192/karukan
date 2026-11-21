@@ -334,3 +334,50 @@ fn test_lctx_for_drops_whitespace_only_context() {
     assert_eq!(engine.lctx_for("", " 東京"), " 東京");
     assert_eq!(engine.lctx_for("  ", "東京 "), "  東京 ");
 }
+
+#[test]
+fn test_earlier_lines_join_as_sentences() {
+    // A user who breaks lines instead of writing 。 still gets context: each
+    // break reads as 。, unless the line already ends in punctuation.
+    let mut engine = InputMethodEngine::new();
+    engine.config.context_chars = 50;
+    let left = |e: &InputMethodEngine| e.surrounding_context.as_ref().unwrap().left.clone();
+
+    engine.set_surrounding_context("八百屋に行った\n新鮮な", "");
+    assert_eq!(left(&engine).as_deref(), Some("八百屋に行った。新鮮な"));
+
+    engine.set_surrounding_context("八百屋に行った。\r\n\r\n  新鮮な", "");
+    assert_eq!(left(&engine).as_deref(), Some("八百屋に行った。  新鮮な"));
+
+    engine.set_surrounding_context("「行こう」\nそれで", "");
+    assert_eq!(left(&engine).as_deref(), Some("「行こう」それで"));
+
+    // caret right after a break: the earlier lines are the context
+    engine.set_surrounding_context("八百屋に行った\n", "");
+    assert_eq!(left(&engine).as_deref(), Some("八百屋に行った"));
+
+    // indentation-only lines are blank lines
+    engine.set_surrounding_context("    \n    ", "");
+    assert!(engine.surrounding_context.is_none());
+
+    // the joined text is what gets cut to context_chars
+    engine.config.context_chars = 6;
+    engine.set_surrounding_context("八百屋に行った\n新鮮な", "");
+    assert_eq!(left(&engine).as_deref(), Some("った。新鮮な"));
+}
+
+#[test]
+fn test_right_context_stays_on_the_caret_line() {
+    let mut engine = InputMethodEngine::new();
+    engine.config.context_chars = 50;
+    engine.set_surrounding_context("", "右側\n次の行");
+    assert_eq!(
+        engine
+            .surrounding_context
+            .as_ref()
+            .unwrap()
+            .right
+            .as_deref(),
+        Some("右側")
+    );
+}

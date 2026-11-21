@@ -109,6 +109,38 @@ fn keep_last_chars(s: &str, n: usize) -> String {
     }
 }
 
+/// The text left of the caret as one line: each line break reads as 。, unless
+/// the line before it already ends in punctuation (or a closing bracket), and
+/// blank lines drop out. Measured on the homophone set with its 、/。 typed as
+/// line breaks (544 items, context cut to 25 chars): only the caret's line
+/// 70.0%, raw `\n` 84.4%, 。 89.3% (、 88.8%, a space 87.7%); with an
+/// unrelated line above, 。 still gives 86.0%.
+fn join_lines(left: &str) -> String {
+    const ENDS: &[char] = &[
+        '。', '、', '！', '？', '!', '?', '.', ',', '，', '．', '…', '」', '』', '）', ')', '】',
+    ];
+    let lines: Vec<&str> = left.split('\n').collect();
+    let mut out = String::new();
+    for (k, line) in lines.iter().enumerate() {
+        let line = line.trim_end_matches('\r');
+        // earlier lines lose their indentation and trailing blanks; the caret's
+        // line is kept as typed (blanks inside real text stay as they are)
+        let line = if k + 1 < lines.len() {
+            line.trim()
+        } else {
+            line
+        };
+        if line.trim().is_empty() {
+            continue;
+        }
+        if !out.is_empty() && !out.ends_with(ENDS) {
+            out.push('。');
+        }
+        out.push_str(line);
+    }
+    out
+}
+
 /// Keep at most the first `n` characters of `s`.
 fn keep_first_chars(s: &str, n: usize) -> String {
     let char_count = s.chars().count();
@@ -440,20 +472,18 @@ impl InputMethodEngine {
             left_context, right_context
         );
 
-        // Strip to current line: left = text after last newline.
-        // If cursor is right after a newline, left context is empty.
-        let left_context = match left_context.rsplit_once('\n') {
-            Some((_, after)) => after,
-            None => left_context,
-        };
+        // Earlier lines are context too: a user who breaks lines where others
+        // write 。 would otherwise leave the model only the caret's line, often
+        // nothing at all. The breaks are read as 。 (see `join_lines`).
+        let joined = join_lines(left_context);
         // A whitespace-only left context is noise, not context: a terminal
         // or code editor reports the indentation before the caret, and the
         // model would read `    ` as preceding text. Treat it as empty so
         // it neither reaches the model nor shows as a blank `lctx:`.
-        let left_context = if left_context.trim().is_empty() {
+        let left_context = if joined.trim().is_empty() {
             ""
         } else {
-            left_context
+            joined.as_str()
         };
         let right_context = right_context
             .split_once('\n')
