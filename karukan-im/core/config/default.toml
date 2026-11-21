@@ -48,9 +48,11 @@ max_latency_ms = 100
 # ほかの処理(ゲームなど)で PC が重いときに入力が止まるのを防ぐ。0 で無効。
 timeout_ms = 500
 # メインモデル（[models] で定義したキーを指定する）
-# 既定は Q8_0。Q5_K_M より大きいが、複数トークンをまとめて評価するときの計算が軽く、
+# 既定は jinen-v2-small を IME での使い方（短い読みを左文脈つきで変換）に合わせて追加学習した
+# Q8_0（元モデルより悪くならないことを確かめた版）。元の jinen-v2-small は jinen-v2-small-q8。
+# Q8_0 は Q5_K_M より大きいが、複数トークンをまとめて評価するときの計算が軽く、
 # 打鍵ごとの変換も Space での変換も速い（精度は同等以上）。
-model = "jinen-v2-small-q8"
+model = "jinen-v2-small-karukan-q8"
 # 軽量モデル（ビームサーチ・自動切替用。[models] のキーを指定する）
 light_model = "jinen-v2-xsmall-q8"
 # 推論スレッド数（0 = 全コア使用）
@@ -71,6 +73,7 @@ english_mix = true
 # my-model = "/home/user/models/my-model.gguf"
 
 [models]
+jinen-v2-small-karukan-q8 = { repo = "OReOOreoaaaa/jinen-v2-small-karukan.gguf", filename = "jinen-v2-small-karukan-r9b-Q8_0.gguf" }
 jinen-v2-small-q8 = { repo = "togatogah/jinen-v2-small.gguf", filename = "jinen-v2-small-Q8_0.gguf" }
 jinen-v2-xsmall-q8 = { repo = "togatogah/jinen-v2-xsmall.gguf", filename = "jinen-v2-xsmall-Q8_0.gguf" }
 jinen-v2-small-q5 = { repo = "togatogah/jinen-v2-small.gguf", filename = "jinen-v2-small-Q5_K_M.gguf" }

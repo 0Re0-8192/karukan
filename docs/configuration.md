@@ -13,7 +13,7 @@ chunk_alphabets = 0             # Chunk に残せる英字の数（0 = 英字は
 strategy = "adaptive"           # 変換ストラテジー（adaptive / light / main）
 num_candidates = 9              # 変換候補数（Space押下時）
 n_threads = 4                   # 推論スレッド数（0 = 全コア使用）
-model = "jinen-v2-small-q8"     # メインモデル（[models] のキーを指定）
+model = "jinen-v2-small-karukan-q8"  # メインモデル（[models] のキーを指定）
 light_model = "jinen-v2-xsmall-q8"  # 軽量モデル（ビームサーチ・長文用。[models] のキーを指定）
 use_context = true              # Surrounding Textを変換に使用する
 context_chars = 25              # 変換に使う前後テキストの最大文字数
@@ -58,11 +58,12 @@ phrases = [                    # フレーズ一覧（書くと既定一覧ご�
 - 文字列: ローカルの GGUF ファイルのパス。`tokenizer.json` は GGUF と同じディレクトリに置きます
 - `{ repo = "...", filename = "..." }`: Hugging Face のリポジトリと GGUF ファイル名。初回起動時にバックグラウンドで自動ダウンロードされます。`tokenizer.json` は同じリポジトリから読み込みます
 
-既定で以下の6モデルが定義済みです（ユーザーの `config.toml` の `[models]` はキー単位でマージされ、同じキーは上書き、既定のエントリはそのまま残ります）。
+既定で以下の7モデルが定義済みです（ユーザーの `config.toml` の `[models]` はキー単位でマージされ、同じキーは上書き、既定のエントリはそのまま残ります）。
 
 | モデルキー | ベースモデル | パラメータ数 | Accuracy@1 (NFKC) |
 |---------|-----------|-----------|------:|
-| [`jinen-v2-small-q8`](https://huggingface.co/togatogah/jinen-v2-small.gguf)（デフォルト） | Qwen3 | 109M | 86.5% |
+| [`jinen-v2-small-karukan-q8`](https://huggingface.co/OReOOreoaaaa/jinen-v2-small-karukan.gguf)（デフォルト。jinen-v2-small の追加学習版） | Qwen3 | 109M | 87.5% |
+| [`jinen-v2-small-q8`](https://huggingface.co/togatogah/jinen-v2-small.gguf) | Qwen3 | 109M | 86.5% |
 | [`jinen-v2-xsmall-q8`](https://huggingface.co/togatogah/jinen-v2-xsmall.gguf)（軽量モデルのデフォルト） | Qwen3 | 36M | 79.0% |
 | [`jinen-v2-small-q5`](https://huggingface.co/togatogah/jinen-v2-small.gguf) | Qwen3 | 109M | 86.0% |
 | [`jinen-v2-xsmall-q5`](https://huggingface.co/togatogah/jinen-v2-xsmall.gguf) | Qwen3 | 36M | 79.0% |
@@ -128,7 +129,7 @@ verbose = false                 # 補助テキストに詳細を出す（Ctrl+Sh
 |------|-----|--------|
 | ビームサーチの対象 | `🎯 うえ 2/30` | 変換中の読みの表示が入れ替わる。🎯 の後ろ（`うえ`）にだけ別候補が出る。それより前は表示中の変換のまま。`2/30` は対象の文字数と `beam_chars` の値 |
 | 推論時間 | `推論: 41ms key: 45ms` | モデルの呼び出しにかかった時間と、その打鍵の処理全体にかかった時間。キャッシュに当たった場合、推論は `0ms` になる |
-| モデル名 | `jinen-v2-small-q8` | 表示中の候補を出したモデル（`[models]` のキー） |
+| モデル名 | `jinen-v2-small-karukan-q8` | 表示中の候補を出したモデル（`[models]` のキー） |
 | モデルに渡した文脈 | `lctx: 昨日は` | 変換時に前方の文脈としてモデルへ渡した文字列（[ペルソナ](persona.md) は含まない）。ターミナルのインデントのような空白だけの文脈は捨てるので表示されない |
 | ペルソナ | `⚡[あ]P:プログラミング` | モード表示に、モデルへ渡している `persona` の実効値が付く |
 
