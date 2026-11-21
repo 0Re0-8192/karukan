@@ -38,6 +38,8 @@ ap.add_argument("--save-min", type=float, default=20)
 ap.add_argument("--eval-every", type=int, default=500)
 ap.add_argument("--holdout-mine", type=int, default=300, help="first N rows of the `mine` source are never trained on")
 ap.add_argument("--seed", type=int, default=1)
+ap.add_argument("--eos", type=int, default=1, help="end-of-text id appended to every target (jinen: 3)")
+ap.add_argument("--pad", type=int, default=0)
 ap.add_argument("--threads", type=int, default=8)
 ap.add_argument("--attn", default=None, help="attention implementation (sdpa / eager / flash_attention_2); default: the library's")
 ap.add_argument("--compile", action="store_true", help="torch.compile the transformer body")
@@ -56,7 +58,7 @@ def log(*m):
 nfkc = lambda s: unicodedata.normalize("NFKC", s)
 tok = Tokenizer.from_file(os.path.join(a.model, "tokenizer.json"))
 M_CTX, M_IN, M_OUT = tok.token_to_id(""), tok.token_to_id(""), tok.token_to_id("")
-EOS, PAD = 1, 0
+EOS, PAD = a.eos, a.pad
 assert None not in (M_CTX, M_IN, M_OUT), "marker tokens missing from the tokenizer"
 enc = lambda s: tok.encode(s, add_special_tokens=False).ids
 
