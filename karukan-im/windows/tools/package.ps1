@@ -1,13 +1,17 @@
-# Builds the portable zip of karukan for Windows: unzip anywhere, run setup.cmd once, done (no build tools,
-# no network). The program files come from an installed, working dist; the models are laid out as a
-# HuggingFace cache so the server finds them without touching the network.
-#   .\package.ps1                         -> <repo>\release\karukan-windows-<date>.zip
+# Builds karukan for Windows as an installer (release\karukan-setup-<version>.exe: install, update in place,
+# uninstall from Settings > Apps) and as a portable zip (unzip anywhere, run setup.cmd once). No build tools,
+# no network needed on the target. The program files come from an installed, working dist; the models are laid
+# out as a HuggingFace cache so the server finds them without touching the network.
+#   .\package.ps1                  -> <repo>\release\karukan-setup-<version>.exe and karukan-windows-<date>.zip
+#   .\package.ps1 -NoZip           -> the installer only
 #   .\package.ps1 -Dist D:\Karukan -Out E:\out
 [CmdletBinding()]
 param(
     [string]$Dist,
     [string]$Out,
-    [string]$SmallGguf = 'D:\Projects\train-data\gguf9b_0.5'
+    [string]$SmallGguf = 'D:\Projects\train-data\gguf9b_0.5',
+    [string]$Setup = 'D:\cargo-target\karukan\release\karukan-setup.exe',
+    [switch]$NoZip
 )
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..')).Path
@@ -59,33 +63,34 @@ Add-HfCache $hub $SmallRepo $SmallRev @((Join-Path $SmallGguf $SmallFile), (Join
 $xs = Join-Path $Dist "hf\hub\models--togatogah--jinen-v2-xsmall.gguf\snapshots\$XsmallRev"
 Add-HfCache $hub $XsmallRepo $XsmallRev @((Join-Path $xs 'jinen-v2-xsmall-Q8_0.gguf'), (Join-Path $xs 'tokenizer.json'))
 
-# 4. config: the published small model as the main model; everything else is the built-in default
-$cfg = @"
-# karukan settings: only what is written here overrides the built-in defaults (see docs/configuration.md)
-[conversion]
-model = "jinen-v2-small-karukan-r9b"
-
-[models]
-jinen-v2-small-karukan-r9b = { repo = "$SmallRepo", filename = "$SmallFile" }
-"@
-New-Item -ItemType Directory -Force (Join-Path $stage 'config') | Out-Null
-[IO.File]::WriteAllText((Join-Path $stage 'config\config.toml'), $cfg.Replace("`r`n", "`n"), (New-Object Text.UTF8Encoding $false))
-
-# 5. setup / uninstall / readme
-foreach ($f in 'setup.ps1', 'uninstall.ps1', 'README.txt') {
-    Copy-Item (Join-Path $PSScriptRoot "package\$f") $stage
-}
+# 4. licenses (the main model is the built-in default, jinen-v2-small-karukan-q8, so no config is shipped:
+#    config\config.toml stays the user's own)
 $lic = Join-Path $stage 'licenses'
 New-Item -ItemType Directory -Force (Join-Path $lic 'karukan'), (Join-Path $lic 'model') | Out-Null
 Copy-Item (Join-Path $root 'LICENSE-MIT'), (Join-Path $root 'LICENSE-APACHE') (Join-Path $lic 'karukan')
 Copy-Item (Join-Path $PSScriptRoot 'package\licenses\dict') $lic -Recurse
 Copy-Item 'D:\Projects\train-data\hf_r9b\README.md' (Join-Path $lic 'model\jinen-v2-small-karukan.md')
+Copy-Item (Join-Path $PSScriptRoot 'package\README.txt') $stage
+
+# 5. the installer: karukan-setup.exe with this folder packed into it
+$setupVersion = (Select-String -Path (Join-Path $root 'karukan-im\windows\setup\Cargo.toml') -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
+$installer = Join-Path $Out "karukan-setup-$setupVersion.exe"
+& $Setup pack $stage -o $installer | Out-Host
+if ($LASTEXITCODE -ne 0) { throw "pack failed: $LASTEXITCODE" }
+$i = Get-Item $installer
+"{0}  {1:N0} MB  sha256 {2}" -f $i.FullName, ($i.Length / 1MB), (Get-FileHash $installer).Hash.ToLower()
+if ($NoZip) { Remove-Item $stage -Recurse -Force; return }
+
+# 6. the zip: the same folder plus setup.cmd / uninstall.cmd (for installing without the exe)
+foreach ($f in 'setup.ps1', 'uninstall.ps1') {
+    Copy-Item (Join-Path $PSScriptRoot "package\$f") $stage
+}
 foreach ($n in 'setup', 'uninstall') {
     $cmd = "@echo off`r`npowershell -NoProfile -ExecutionPolicy Bypass -File `"%~dp0$n.ps1`"`r`npause`r`n"
     [IO.File]::WriteAllText((Join-Path $stage "$n.cmd"), $cmd, [Text.Encoding]::ASCII)
 }
 
-# 6. zip (bsdtar from System32: fast, and no 2 GB limit)
+#    (bsdtar from System32: fast, and no 2 GB limit)
 $zip = Join-Path $Out ("karukan-windows-{0}.zip" -f (Get-Date -Format 'yyyyMMdd'))
 if (Test-Path $zip) { Remove-Item $zip }
 Push-Location $Out
