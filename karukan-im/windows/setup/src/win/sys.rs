@@ -201,7 +201,7 @@ pub fn app_install_location() -> Option<PathBuf> {
 pub fn write_app_entry(dir: &Path, version: &str, size_kb: u64) -> Result<()> {
     let sub = wide(APP_KEY);
     let mut key = HKEY::default();
-    unsafe {
+    let created = unsafe {
         RegCreateKeyExW(
             HKEY_CURRENT_USER,
             PCWSTR(sub.as_ptr()),
@@ -213,8 +213,8 @@ pub fn write_app_entry(dir: &Path, version: &str, size_kb: u64) -> Result<()> {
             &mut key,
             None,
         )
-        .ok()?;
-    }
+    };
+    created.ok()?;
     let exe = dir.join("karukan-setup.exe");
     let strings = [
         ("DisplayName", "karukan".to_string()),

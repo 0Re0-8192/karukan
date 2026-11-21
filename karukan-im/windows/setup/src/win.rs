@@ -403,15 +403,23 @@ fn install(o: &Opts) -> Result<Option<String>> {
         .sum::<u64>()
         >> 10;
 
+    let mut warning = None;
     if !o.no_register {
         let loader = dir.join(LOADER);
         let registered = sys::com_server_path();
         let same_path = registered.as_ref().is_some_and(|p| p.eq(&loader));
         if !same_path || loader_before.as_deref() != hash_file(&loader).ok().as_deref() {
-            sys::regsvr32(&loader, false)?;
+            sys::regsvr32(&loader, false).context("regsvr32")?;
         }
-        sys::install_layout_or_tip(true)?;
-        sys::write_app_entry(&dir, VERSION, size_kb)?;
+        sys::install_layout_or_tip(true).context("入力方式の一覧")?;
+        // only the Settings > Apps entry: typing works without it, so a refusal is reported, not fatal
+        // (seen on one Windows 11 PC: the key denied to this exe and to processes it starts)
+        if let Err(e) = sys::write_app_entry(&dir, VERSION, size_kb) {
+            warning = Some(format!(
+                "設定 > アプリに登録できませんでした({e})。外すときは {} --uninstall",
+                dir.join(SETUP_EXE).display()
+            ));
+        }
     }
     // running servers swap themselves for the new one at the next composition
     let stamp_file = dir.join("data").join("user_english.txt");
@@ -421,10 +429,17 @@ fn install(o: &Opts) -> Result<Option<String>> {
             .open(&stamp_file)
             .and_then(|f| f.set_modified(SystemTime::now()));
     }
-    Ok(Some(match old_version {
+    let done = match old_version {
         Some(v) if v == VERSION || v == "?" => format!("karukan {VERSION} を入れ直しました。"),
         Some(v) => format!("karukan を {v} から {VERSION} に更新しました。"),
         None => format!("karukan {VERSION} を入れました。Win+Space で選べます。"),
+    };
+    Ok(Some(match warning {
+        Some(w) => format!(
+            "{done}
+{w}"
+        ),
+        None => done,
     }))
 }
 
