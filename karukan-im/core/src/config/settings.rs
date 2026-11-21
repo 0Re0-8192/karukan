@@ -416,7 +416,7 @@ mod tests {
         let settings = Settings::default();
         assert_eq!(settings.conversion.num_candidates, 9);
         assert!(settings.conversion.use_context);
-        assert_eq!(settings.conversion.context_chars, 10);
+        assert_eq!(settings.conversion.context_chars, 25);
         assert!(settings.learning.enabled);
         assert_eq!(settings.learning.max_entries, 10000);
         assert_eq!(settings.learning.max_surface_chars, 50);
@@ -623,7 +623,7 @@ num_candidates = 3
         assert_eq!(settings.conversion.num_candidates, 3);
         // Should use default for unspecified values
         assert!(settings.conversion.use_context);
-        assert_eq!(settings.conversion.context_chars, 10);
+        assert_eq!(settings.conversion.context_chars, 25);
     }
 
     #[test]

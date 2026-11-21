@@ -4,7 +4,7 @@
   python eval_homo.py compare result_a.json result_b.json ...
 
 Each item is run twice: with the whole context_text, and with only its last --ctx-chars characters, which is what
-the engine hands the model (`[conversion] context_chars`, default 10). An answer is `ok` (one of the keys), `rival`
+the engine hands the model (`[conversion] context_chars`, default 25). An answer is `ok` (one of the keys), `rival`
 (a surface the context rules out: the homophone error) or `other` (anything else: orthography, segmentation).
 `compare` prints accuracy by tag and, for each pair of results, the discordant counts with an exact McNemar p."""
 import argparse, json, math, sys, unicodedata

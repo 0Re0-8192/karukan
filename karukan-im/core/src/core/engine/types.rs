@@ -170,7 +170,7 @@ impl Default for EngineConfig {
         Self {
             num_candidates: 3, // Space conversion: beam search with 3 candidates
             display_context_chars: 10,
-            context_chars: 10,
+            context_chars: 25,
             chunk_chars: 30,
             chunk_symbols: 1,
             chunk_digits: 0,

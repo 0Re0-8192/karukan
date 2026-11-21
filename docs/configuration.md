@@ -16,7 +16,7 @@ n_threads = 4                   # 推論スレッド数（0 = 全コア使用）
 model = "jinen-v2-small-q8"     # メインモデル（[models] のキーを指定）
 light_model = "jinen-v2-xsmall-q8"  # 軽量モデル（ビームサーチ・長文用。[models] のキーを指定）
 use_context = true              # Surrounding Textを変換に使用する
-context_chars = 10              # 変換に使う前後テキストの最大文字数
+context_chars = 25              # 変換に使う前後テキストの最大文字数
 persona = ""                    # 変換ペルソナ（例: "プログラミング"。[変換ペルソナ](persona.md) 参照）
 beam_chars = 30                 # 別候補を出す範囲の文字数（Chunk単位で後ろからまとめる）
 beam_width = 3                  # 別候補の本数
