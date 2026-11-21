@@ -148,8 +148,15 @@ fn spawn_engine() -> Option<EngineClient> {
         envs.push(("KARUKAN_CONFIG_DIR".into(), p("config")));
         envs.push(("HF_HOME".into(), p("hf")));
     }
-    let mut e = EngineClient::spawn(&exe, &envs).ok()?;
+    let mut e = match EngineClient::spawn(&exe, &envs) {
+        Ok(e) => e,
+        Err(err) => {
+            diag(&format!("cannot start {}: {err}", exe.display()));
+            return None;
+        }
+    };
     if !e.init() {
+        diag(&format!("{} started but did not answer init", exe.display()));
         return None;
     }
     Some(e)
