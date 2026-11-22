@@ -16,17 +16,40 @@
 use std::collections::HashSet;
 use std::fs::OpenOptions;
 use std::io::Write;
-use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use super::*;
 
 const MAX_RAW: usize = 120;
 
+/// How often the word list is looked at for changes another process made.
+const RELOAD_CHECK: Duration = Duration::from_secs(2);
+
 #[derive(Default)]
 pub(super) struct Corrections {
     dir: Option<PathBuf>,
     pub(super) english: HashSet<String>,
+    /// The word list as last read (mtime, length): another engine appending a
+    /// word changes it, and the next word typed here reloads it.
+    stamp: Option<(SystemTime, u64)>,
+    checked: Option<Instant>,
+}
+
+fn file_stamp(p: &Path) -> Option<(SystemTime, u64)> {
+    let m = std::fs::metadata(p).ok()?;
+    Some((m.modified().ok()?, m.len()))
+}
+
+fn read_words(p: &Path) -> HashSet<String> {
+    std::fs::read_to_string(p)
+        .map(|t| {
+            t.lines()
+                .map(|l| l.trim().to_ascii_lowercase())
+                .filter(|w| is_word(w))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn now() -> u64 {
@@ -44,17 +67,28 @@ fn is_word(s: &str) -> bool {
 impl Corrections {
     /// Load the learned words.
     pub(super) fn open(dir: PathBuf) -> Self {
-        let english = std::fs::read_to_string(dir.join("user_english.txt"))
-            .map(|t| {
-                t.lines()
-                    .map(|l| l.trim().to_ascii_lowercase())
-                    .filter(|w| is_word(w))
-                    .collect()
-            })
-            .unwrap_or_default();
+        let path = dir.join("user_english.txt");
         Self {
+            english: read_words(&path),
+            stamp: file_stamp(&path),
+            checked: Some(Instant::now()),
             dir: Some(dir),
-            english,
+        }
+    }
+
+    /// Pick up words another process (another app's server, the curate job) added,
+    /// without restarting anything. Cheap: one stat at most every `RELOAD_CHECK`.
+    pub(super) fn reload_if_changed(&mut self) {
+        let Some(dir) = &self.dir else { return };
+        if self.checked.is_some_and(|t| t.elapsed() < RELOAD_CHECK) {
+            return;
+        }
+        self.checked = Some(Instant::now());
+        let path = dir.join("user_english.txt");
+        let stamp = file_stamp(&path);
+        if stamp != self.stamp {
+            self.english = read_words(&path);
+            self.stamp = stamp;
         }
     }
 
@@ -75,6 +109,9 @@ impl Corrections {
                 .open(dir.join("user_english.txt"))
         {
             let _ = writeln!(f, "{word}");
+            drop(f);
+            // our own append is already in `english`: no reload for it
+            self.stamp = file_stamp(&dir.join("user_english.txt"));
         }
     }
 
@@ -158,5 +195,29 @@ impl InputMethodEngine {
             self.corrections.learn_english(committed);
         }
         self.corrections.log("live", &raw, reading, "", committed);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_word_another_engine_learned_is_picked_up_without_a_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut a = Corrections::open(dir.path().to_path_buf());
+        let mut b = Corrections::open(dir.path().to_path_buf());
+        a.learn_english("repo");
+        assert!(!b.is_known("repo"));
+        b.reload_if_changed(); // within RELOAD_CHECK: not looked at yet
+        assert!(!b.is_known("repo"));
+        b.checked = None;
+        b.reload_if_changed();
+        assert!(b.is_known("repo"));
+        // the learner's own append does not count as a change
+        a.checked = None;
+        let before = a.english.len();
+        a.reload_if_changed();
+        assert_eq!(a.english.len(), before);
     }
 }

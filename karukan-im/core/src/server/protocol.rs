@@ -144,6 +144,9 @@ pub struct KeyResult {
     /// unknown. Frontends may show it beside the candidates; the macOS one
     /// ignores it.
     pub typed: String,
+    /// The same keys as kana (`かいぎ`); the keys themselves in direct input.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub typed_kana: String,
 }
 
 #[derive(Debug, Serialize)]

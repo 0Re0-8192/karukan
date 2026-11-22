@@ -352,6 +352,18 @@ impl InputMethodEngine {
         self.raw_keys.clone()
     }
 
+    /// The typed keys as kana (`かいぎ` for `kaigi`), for the frontend's
+    /// typed-keys row: the reading of what was typed, while the preedit shows its
+    /// conversion. Direct input (alphabet, emoji) shows the keys themselves.
+    pub fn typed_kana(&self) -> String {
+        let keys = self.typed_keys();
+        if keys.is_empty() || matches!(self.mode.current(), InputMode::Alphabet | InputMode::Emoji)
+        {
+            return keys;
+        }
+        with_decimal_points(self.converters.romaji.convert_flush(&keys))
+    }
+
     /// Live conversion text with English words restored, for a model answer
     /// that still carries unresolved romaji (`ウィンドws`): the keystrokes
     /// before the pending tail, mixed. `None` when the answer is clean or

@@ -662,6 +662,10 @@ impl InputMethodEngine {
     fn dispatch_key(&mut self, key: &KeyEvent) -> EngineResult {
         // Install converters the background loader has finished; never blocks.
         self.poll_loaded_models();
+        // A new word: take the English words other apps learned meanwhile.
+        if matches!(self.state, InputState::Empty) {
+            self.corrections.reload_if_changed();
+        }
 
         // Log modifier key events for debugging key mapping issues
         if key.keysym.is_modifier() {

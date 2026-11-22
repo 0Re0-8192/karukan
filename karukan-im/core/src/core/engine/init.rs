@@ -19,6 +19,13 @@ use super::*;
 static USER_DICT_CACHE: std::sync::OnceLock<Option<std::sync::Arc<Dictionary>>> =
     std::sync::OnceLock::new();
 
+/// Process-global cache of the system dictionary, keyed by its path: a server
+/// shared by every app holds one engine per app, and reading the 200 MB
+/// dictionary again for each would cost half a second and its size in memory.
+static SYSTEM_DICT_CACHE: std::sync::Mutex<
+    Option<(std::path::PathBuf, std::sync::Arc<Dictionary>)>,
+> = std::sync::Mutex::new(None);
+
 /// Converters produced by the background model-loading thread, handed to the
 /// engine through the `model_loading` channel.
 pub(super) struct LoadedConverters {
@@ -198,10 +205,20 @@ impl InputMethodEngine {
             return;
         }
 
+        let mut cache = SYSTEM_DICT_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((p, dict)) = cache.as_ref()
+            && *p == path
+        {
+            debug!("System dictionary resolved from process-level cache");
+            self.dicts.system = Some(dict.clone());
+            return;
+        }
         match Dictionary::load(&path) {
             Ok(dict) => {
                 debug!("System dictionary loaded from {:?}", path);
-                self.dicts.system = Some(std::sync::Arc::new(dict));
+                let dict = std::sync::Arc::new(dict);
+                *cache = Some((path, dict.clone()));
+                self.dicts.system = Some(dict);
             }
             Err(e) => {
                 debug!("Failed to load system dictionary from {:?}: {}", path, e);

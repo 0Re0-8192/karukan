@@ -32,14 +32,22 @@ use crate::keymap::{self, KEYSYM_SPACE, KEYSYM_SUPER_R};
 
 const ENGINE_RETRY: Duration = Duration::from_secs(10);
 const STAMP_CHECK: Duration = Duration::from_secs(60);
+/// How long a first key waits for a shared server it had to start.
+const SHARED_START: Duration = Duration::from_secs(3);
+/// After the shared server failed once, private servers for this long.
+const SHARED_RETRY: Duration = Duration::from_secs(60);
 
 pub struct State {
     tid: u32,
     thread_mgr: Option<ITfThreadMgr>,
     engine: Option<EngineClient>,
     engine_failed: Option<Instant>,
-    engine_stamp: Option<std::time::SystemTime>,
+    /// What the running server was started for (the pipe name, or for a private
+    /// server the data stamp): when it changes, the next word gets a new server.
+    engine_key: Option<String>,
     stamp_checked: Instant,
+    /// The shared server could not be reached: private servers until then.
+    shared_failed: Option<Instant>,
     /// Keys typed into the current composition, shown beside the candidates.
     typed: String,
     aux: Option<String>,
@@ -58,8 +66,9 @@ impl State {
             thread_mgr: None,
             engine: None,
             engine_failed: None,
-            engine_stamp: None,
+            engine_key: None,
             stamp_checked: Instant::now(),
+            shared_failed: None,
             typed: String::new(),
             aux: None,
             composition: None,
@@ -74,13 +83,15 @@ impl State {
     fn engine(&mut self) -> Option<&mut EngineClient> {
         // The server reads the dictionaries once at start-up, so a long-lived app
         // (a browser) would never see a new dict.bin or the curate job's additions.
-        // Between compositions, swap in a fresh server when those files change (checked
-        // once a minute; they change a few times a day); the old one saves its learning
-        // cache on the way out.
+        // Between compositions, move to a fresh server when those files (or the
+        // server itself) change, checked once a minute. The English word list is
+        // not one of them: the server reloads it in place.
         if self.engine.is_some() && !self.has_preedit && self.stamp_checked.elapsed() >= STAMP_CHECK
         {
             self.stamp_checked = Instant::now();
-            if data_stamp() != self.engine_stamp {
+            if engine_key(self.engine.as_ref().is_some_and(|e| e.pipe_name.is_some()))
+                != self.engine_key
+            {
                 self.engine = None;
             }
         }
@@ -95,11 +106,34 @@ impl State {
             {
                 return None;
             }
-            let stamp = data_stamp();
-            match spawn_engine() {
+            let t0 = Instant::now();
+            let try_shared = use_shared()
+                && self
+                    .shared_failed
+                    .is_none_or(|t| t.elapsed() >= SHARED_RETRY);
+            let shared = if try_shared {
+                let e = connect_shared();
+                if e.is_none() {
+                    self.shared_failed = Some(Instant::now());
+                }
+                e
+            } else {
+                None
+            };
+            let got = shared.or_else(spawn_engine);
+            match got {
                 Some(e) => {
+                    self.engine_key = engine_key(e.pipe_name.is_some());
+                    diag(&format!(
+                        "server ready in {} ms ({})",
+                        t0.elapsed().as_millis(),
+                        if e.pipe_name.is_some() {
+                            "shared"
+                        } else {
+                            "private"
+                        }
+                    ));
                     self.engine = Some(e);
-                    self.engine_stamp = stamp;
                     self.stamp_checked = Instant::now();
                     self.engine_failed = None;
                 }
@@ -113,8 +147,20 @@ impl State {
     }
 }
 
+/// What a server is started for: the shared server's pipe name, or for a
+/// private one the data stamp.
+fn engine_key(shared: bool) -> Option<String> {
+    if shared {
+        crate::dll_dir().and_then(|d| pipe_name(&d))
+    } else {
+        Some(format!("{:?}", data_stamp()))
+    }
+}
+
 /// Newest modification time among the files the server loads at start-up
 /// (portable layout only; elsewhere the data directory is not ours to watch).
+/// `user_english.txt` is left out: the server picks up new words by itself, and
+/// counting it restarted every app's server each time a word was learned.
 fn data_stamp() -> Option<std::time::SystemTime> {
     let dir = crate::dll_dir()?;
     if !dir.join("portable.flag").exists() {
@@ -122,10 +168,7 @@ fn data_stamp() -> Option<std::time::SystemTime> {
     }
     let data = dir.join("data");
     let mtime = |p: &std::path::Path| std::fs::metadata(p).and_then(|m| m.modified()).ok();
-    let mut newest = ["dict.bin", "user_english.txt"]
-        .iter()
-        .filter_map(|n| mtime(&data.join(n)))
-        .max();
+    let mut newest = mtime(&data.join("dict.bin"));
     if let Ok(rd) = std::fs::read_dir(data.join("user_dicts")) {
         for f in rd.flatten() {
             newest = newest.max(mtime(&f.path()));
@@ -134,13 +177,15 @@ fn data_stamp() -> Option<std::time::SystemTime> {
     newest
 }
 
-fn spawn_engine() -> Option<EngineClient> {
-    let dir = crate::dll_dir()?;
+fn server_exe(dir: &std::path::Path) -> PathBuf {
     // KARUKAN_IMSERVER overrides the server path (used by the tests).
-    let exe = match std::env::var_os("KARUKAN_IMSERVER") {
+    match std::env::var_os("KARUKAN_IMSERVER") {
         Some(p) => PathBuf::from(p),
         None => dir.join("karukan-imserver.exe"),
-    };
+    }
+}
+
+fn server_envs(dir: &std::path::Path) -> Vec<(String, String)> {
     let mut envs: Vec<(String, String)> = Vec::new();
     // Portable mode: keep every file next to the DLL.
     if dir.join("portable.flag").exists() {
@@ -149,6 +194,93 @@ fn spawn_engine() -> Option<EngineClient> {
         envs.push(("KARUKAN_CONFIG_DIR".into(), p("config")));
         envs.push(("HF_HOME".into(), p("hf")));
     }
+    envs
+}
+
+/// The shared server is for ordinary desktop apps; a sandboxed or low-integrity
+/// one cannot open it and keeps a private server. Tests that point `KARUKAN_IMSERVER` at a server
+/// get private ones unless they ask (`KARUKAN_SHARED=1`).
+fn use_shared() -> bool {
+    if std::env::var_os("KARUKAN_IMSERVER").is_some() {
+        return std::env::var_os("KARUKAN_SHARED").is_some_and(|v| v == "1");
+    }
+    std::env::var_os("KARUKAN_SHARED").is_none_or(|v| v != "0") && crate::shared::eligible()
+}
+
+/// `karukan-<user SID>-<integrity level>-<hash of the install, the server build and
+/// the dictionaries>`.
+fn pipe_name(dir: &std::path::Path) -> Option<String> {
+    let sid = crate::shared::user_sid()?;
+    let exe = server_exe(dir);
+    let mtime = std::fs::metadata(&exe).and_then(|m| m.modified()).ok();
+    let key = format!("{}|{:?}|{:?}", dir.display(), mtime, data_stamp());
+    // FNV-1a: stable across processes and builds (std's hasher is not)
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in key.bytes() {
+        h ^= b as u64;
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    let level = crate::shared::integrity().unwrap_or(0);
+    Some(format!("karukan-{sid}-{level:x}-{h:016x}"))
+}
+
+/// Start the shared server if it is not running yet; never waits for it.
+/// Called when an app activates the text service, so the dictionaries and models
+/// are loaded by the time the user types.
+pub(crate) fn prewarm_shared() {
+    if !use_shared() {
+        return;
+    }
+    let Some(dir) = crate::dll_dir() else { return };
+    let Some(name) = pipe_name(&dir) else { return };
+    if !crate::shared::pipe_exists(&name) {
+        let _ = crate::shared::spawn_detached(&server_exe(&dir), &name, &server_envs(&dir));
+    }
+}
+
+/// Connect to the shared server, starting it when nobody has yet.
+fn connect_shared() -> Option<EngineClient> {
+    let dir = crate::dll_dir()?;
+    let name = pipe_name(&dir)?;
+    let deadline = Instant::now() + SHARED_START;
+    let mut spawned = false;
+    let mut e = loop {
+        match EngineClient::connect(&name) {
+            Ok(e) => break e,
+            Err(err) => {
+                // 2: no such pipe yet; 231: all instances busy (another app connecting)
+                let code = err.raw_os_error().unwrap_or(0);
+                if code == 2 && !spawned {
+                    spawned = true;
+                    if let Err(err) =
+                        crate::shared::spawn_detached(&server_exe(&dir), &name, &server_envs(&dir))
+                    {
+                        diag(&format!("cannot start the shared server: {err}"));
+                        return None;
+                    }
+                } else if code != 2 && code != 231 {
+                    diag(&format!("cannot open {name}: {err}"));
+                    return None;
+                }
+                if Instant::now() >= deadline {
+                    diag(&format!("{name} did not appear"));
+                    return None;
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
+    };
+    if !e.init() {
+        diag(&format!("{name} did not answer init"));
+        return None;
+    }
+    Some(e)
+}
+
+fn spawn_engine() -> Option<EngineClient> {
+    let dir = crate::dll_dir()?;
+    let exe = server_exe(&dir);
+    let envs = server_envs(&dir);
     let mut e = match EngineClient::spawn(&exe, &envs) {
         Ok(e) => e,
         Err(err) => {
@@ -482,11 +614,81 @@ fn text_anchor(state: &Rc<RefCell<State>>, ec: u32, ctx: &ITfContext) -> Option<
         let view = ctx.GetActiveView().ok()?;
         let mut rc = RECT::default();
         let mut clipped = BOOL(0);
-        view.GetTextExt(ec, &range, &mut rc, &mut clipped).ok()?;
+        let got = view.GetTextExt(ec, &range, &mut rc, &mut clipped);
+        // An app whose layout is not ready yet (TS_E_NOLAYOUT, common for the
+        // first character in a browser) fails here, and some report an empty
+        // rectangle. Either way the window must not fall back on wherever it last
+        // was, which can be another field or another app.
+        if got.is_ok() && rc.bottom > rc.top && !(rc.left == 0 && rc.top == 0) {
+            return Some(Anchor {
+                x: rc.left,
+                top: rc.top,
+                bottom: rc.bottom,
+            });
+        }
+        let hwnd = view.GetWnd().ok();
+        let fallback = caret_anchor(hwnd);
+        diag(&format!(
+            "GetTextExt {got:?} rect=({},{},{},{}); caret fallback {:?}",
+            rc.left,
+            rc.top,
+            rc.right,
+            rc.bottom,
+            fallback.map(|a| (a.x, a.top, a.bottom))
+        ));
+        fallback
+    }
+}
+
+/// Where the app's own caret is (the system caret most edit controls keep), or
+/// failing that the top-left of the app window's client area.
+fn caret_anchor(hwnd: Option<windows::Win32::Foundation::HWND>) -> Option<Anchor> {
+    use windows::Win32::Foundation::POINT;
+    use windows::Win32::Graphics::Gdi::ClientToScreen;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GUITHREADINFO, GetClientRect, GetGUIThreadInfo, GetWindowThreadProcessId,
+    };
+    unsafe {
+        let thread = hwnd.map(|h| GetWindowThreadProcessId(h, None)).unwrap_or(0);
+        let mut gi = GUITHREADINFO {
+            cbSize: std::mem::size_of::<GUITHREADINFO>() as u32,
+            ..Default::default()
+        };
+        if GetGUIThreadInfo(thread, &mut gi).is_ok()
+            && !gi.hwndCaret.is_invalid()
+            && gi.rcCaret.bottom > gi.rcCaret.top
+        {
+            let mut top = POINT {
+                x: gi.rcCaret.left,
+                y: gi.rcCaret.top,
+            };
+            let mut bottom = POINT {
+                x: gi.rcCaret.left,
+                y: gi.rcCaret.bottom,
+            };
+            if ClientToScreen(gi.hwndCaret, &mut top).as_bool()
+                && ClientToScreen(gi.hwndCaret, &mut bottom).as_bool()
+            {
+                return Some(Anchor {
+                    x: top.x,
+                    top: top.y,
+                    bottom: bottom.y,
+                });
+            }
+        }
+        let h = hwnd
+            .filter(|h| !h.is_invalid())
+            .or(Some(gi.hwndFocus).filter(|h| !h.is_invalid()))?;
+        let mut rc = RECT::default();
+        GetClientRect(h, &mut rc).ok()?;
+        let mut p = POINT { x: 0, y: 0 };
+        if !ClientToScreen(h, &mut p).as_bool() {
+            return None;
+        }
         Some(Anchor {
-            x: rc.left,
-            top: rc.top,
-            bottom: rc.bottom,
+            x: p.x + 16,
+            top: p.y,
+            bottom: p.y + 24,
         })
     }
 }
@@ -613,6 +815,7 @@ impl TextService_Impl {
             st.atom_converted = a_cv;
             st.open = true;
         }
+        prewarm_shared();
         Ok(())
     }
 
@@ -756,7 +959,11 @@ impl TextService_Impl {
             } else {
                 // the engine knows what the keys were (it sees Backspace out of a
                 // conversion, cursor moves, mid-word inserts); a count kept here would not
-                st.typed = result.typed.clone();
+                st.typed = if result.typed_kana.is_empty() {
+                    result.typed.clone()
+                } else {
+                    result.typed_kana.clone()
+                };
             }
         }
         request_session(&self.state, ctx, result.actions, &self.sink(), true);

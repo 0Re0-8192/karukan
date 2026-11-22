@@ -36,6 +36,18 @@ directories = "6"
 # Error handling
 anyhow.workspace = true
 
+[target.'cfg(windows)'.dependencies.windows]
+# named-pipe mode of karukan-imserver (one server shared by every Windows app)
+version = "0.62"
+features = [
+  "Win32_Foundation",
+  "Win32_Security",
+  "Win32_Security_Authorization",
+  "Win32_Storage_FileSystem",
+  "Win32_System_Pipes",
+  "Win32_System_Threading",
+]
+
 [dev-dependencies]
 tempfile.workspace = true
 

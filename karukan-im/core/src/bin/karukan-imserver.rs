@@ -53,6 +53,31 @@ fn main() {
         return;
     }
 
+    // Windows: `--pipe NAME [--idle-exit SECS]` serves every app over one named pipe
+    #[cfg(windows)]
+    {
+        let args: Vec<String> = std::env::args().collect();
+        if let Some(i) = args.iter().position(|a| a == "--pipe") {
+            let Some(name) = args.get(i + 1) else {
+                tracing::error!("--pipe needs a name");
+                std::process::exit(2);
+            };
+            let idle = args
+                .iter()
+                .position(|a| a == "--idle-exit")
+                .and_then(|i| args.get(i + 1))
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(300u64);
+            if let Err(e) =
+                karukan_im::server::pipe::serve(name, std::time::Duration::from_secs(idle))
+            {
+                tracing::error!("pipe server failed: {e:#}");
+                std::process::exit(1);
+            }
+            return;
+        }
+    }
+
     let mut server = ImServer::new();
     let stdin = std::io::stdin().lock();
     let mut stdout = std::io::stdout().lock();

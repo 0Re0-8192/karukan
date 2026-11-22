@@ -1,7 +1,7 @@
 //! karukan Windows frontend: a TSF text service DLL.
 //!
-//! All IME state lives in `karukan-imserver` (spawned as a hidden child
-//! process, see [`engine`]); this crate translates Windows key events and
+//! All IME state lives in `karukan-imserver` (one server shared by every app over a
+//! named pipe, or a private child process, see [`engine`]); this crate translates Windows key events and
 //! applies the engine's UI actions through TSF.
 
 pub mod engine;
@@ -17,6 +17,8 @@ mod factory;
 mod guids;
 #[cfg(windows)]
 mod register;
+#[cfg(windows)]
+mod shared;
 #[cfg(windows)]
 mod tip;
 

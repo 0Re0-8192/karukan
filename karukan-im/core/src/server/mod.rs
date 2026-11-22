@@ -4,6 +4,8 @@
 //! process spawned by the macOS (Swift/InputMethodKit) frontend. See
 //! [`protocol`] for the wire format.
 
+#[cfg(windows)]
+pub mod pipe;
 pub mod protocol;
 
 use serde_json::{Value, json};
@@ -169,6 +171,7 @@ impl ImServer {
             conversion_ms: self.engine.last_conversion_ms(),
             process_key_ms: self.engine.last_process_key_ms(),
             typed: self.engine.typed_keys(),
+            typed_kana: self.engine.typed_kana(),
         })
         .map_err(internal_error)
     }

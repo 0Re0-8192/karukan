@@ -1,0 +1,163 @@
+//! What the text service needs to share one server among all apps: who the user
+//! is, whether this app may use the shared server, and starting it detached.
+
+use std::path::Path;
+use std::sync::OnceLock;
+
+use windows::Win32::Foundation::{CloseHandle, HANDLE, HLOCAL, LocalFree};
+use windows::Win32::Security::Authorization::ConvertSidToStringSidW;
+use windows::Win32::Security::{
+    GetSidSubAuthority, GetSidSubAuthorityCount, GetTokenInformation, TOKEN_INFORMATION_CLASS,
+    TOKEN_MANDATORY_LABEL, TOKEN_QUERY, TOKEN_USER, TokenIntegrityLevel, TokenIsAppContainer,
+    TokenUser,
+};
+use windows::Win32::System::Pipes::WaitNamedPipeW;
+use windows::Win32::System::Threading::{
+    CREATE_BREAKAWAY_FROM_JOB, CREATE_NO_WINDOW, CREATE_UNICODE_ENVIRONMENT, CreateProcessW,
+    GetCurrentProcess, OpenProcessToken, PROCESS_CREATION_FLAGS, PROCESS_INFORMATION, STARTUPINFOW,
+};
+use windows::core::{HSTRING, PCWSTR, PWSTR};
+
+const SECURITY_MANDATORY_MEDIUM_RID: u32 = 0x2000;
+
+fn token_info(class: TOKEN_INFORMATION_CLASS) -> Option<Vec<u8>> {
+    unsafe {
+        let mut token = HANDLE::default();
+        OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token).ok()?;
+        let mut len = 0u32;
+        let _ = GetTokenInformation(token, class, None, 0, &mut len);
+        let mut buf = vec![0u8; len.max(4) as usize];
+        let ok = GetTokenInformation(token, class, Some(buf.as_mut_ptr().cast()), len, &mut len);
+        let _ = CloseHandle(token);
+        ok.ok()?;
+        Some(buf)
+    }
+}
+
+/// The current user's SID as a string, e.g. `S-1-5-21-…`.
+pub fn user_sid() -> Option<String> {
+    static SID: OnceLock<Option<String>> = OnceLock::new();
+    SID.get_or_init(|| unsafe {
+        let buf = token_info(TokenUser)?;
+        let user = &*(buf.as_ptr() as *const TOKEN_USER);
+        let mut s = PWSTR::null();
+        ConvertSidToStringSidW(user.User.Sid, &mut s).ok()?;
+        let sid = s.to_string().ok();
+        let _ = LocalFree(Some(HLOCAL(s.0.cast())));
+        sid
+    })
+    .clone()
+}
+
+/// This process's integrity level (the label's RID: 0x2000 medium, 0x3000 high).
+pub fn integrity() -> Option<u32> {
+    static RID: OnceLock<Option<u32>> = OnceLock::new();
+    *RID.get_or_init(|| unsafe {
+        let buf = token_info(TokenIntegrityLevel)?;
+        let label = &*(buf.as_ptr() as *const TOKEN_MANDATORY_LABEL);
+        let sid = label.Label.Sid;
+        let n = *GetSidSubAuthorityCount(sid);
+        if n == 0 {
+            return None;
+        }
+        Some(*GetSidSubAuthority(sid, (n - 1) as u32))
+    })
+}
+
+/// An ordinary desktop app: not an app container, medium integrity or above.
+/// The level is part of the pipe name, so elevated apps share a server of their
+/// own (with UAC off, that is every app) and never one an ordinary app started.
+pub fn eligible() -> bool {
+    static OK: OnceLock<bool> = OnceLock::new();
+    *OK.get_or_init(|| {
+        let container = token_info(TokenIsAppContainer)
+            .map(|b| u32::from_ne_bytes([b[0], b[1], b[2], b[3]]) != 0)
+            .unwrap_or(true);
+        !container && integrity().is_some_and(|r| r >= SECURITY_MANDATORY_MEDIUM_RID)
+    })
+}
+
+/// A server already listens on the name (checked without connecting to it).
+pub fn pipe_exists(name: &str) -> bool {
+    let path = HSTRING::from(format!(r"\\.\pipe\{name}"));
+    // returns at once with "file not found" when no instance exists; succeeds
+    // or times out after 1 ms when one does
+    let ok = unsafe { WaitNamedPipeW(&path, 1).as_bool() };
+    ok || windows::core::Error::from_thread().code().0 & 0xffff != 2
+}
+
+/// Start `exe --pipe name` on its own: no console, no handles of the app
+/// inherited (a long-lived server holding an app's pipe open could keep that app
+/// from ever seeing EOF), and out of the app's job when the job allows it, so the
+/// server outlives the app that happened to start it.
+pub fn spawn_detached(exe: &Path, name: &str, envs: &[(String, String)]) -> std::io::Result<()> {
+    let mut cmd: Vec<u16> = format!("\"{}\" --pipe {name}", exe.display())
+        .encode_utf16()
+        .chain([0])
+        .collect();
+    // the environment block: this process's variables with `envs` on top
+    let mut vars: Vec<(String, String)> = std::env::vars()
+        .filter(|(k, _)| !envs.iter().any(|(e, _)| e.eq_ignore_ascii_case(k)))
+        .collect();
+    vars.extend(envs.iter().cloned());
+    let mut block: Vec<u16> = Vec::new();
+    for (k, v) in &vars {
+        block.extend(format!("{k}={v}").encode_utf16());
+        block.push(0);
+    }
+    block.push(0);
+    let exe_w = HSTRING::from(exe.as_os_str());
+    let si = STARTUPINFOW {
+        cb: std::mem::size_of::<STARTUPINFOW>() as u32,
+        ..Default::default()
+    };
+    let run = |flags: PROCESS_CREATION_FLAGS, cmd: &mut Vec<u16>| unsafe {
+        let mut pi = PROCESS_INFORMATION::default();
+        CreateProcessW(
+            PCWSTR(exe_w.as_ptr()),
+            Some(PWSTR(cmd.as_mut_ptr())),
+            None,
+            None,
+            false,
+            flags | CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT,
+            Some(block.as_ptr().cast()),
+            PCWSTR::null(),
+            &si,
+            &mut pi,
+        )
+        .map(|_| {
+            let _ = CloseHandle(pi.hThread);
+            let _ = CloseHandle(pi.hProcess);
+        })
+    };
+    run(CREATE_BREAKAWAY_FROM_JOB, &mut cmd)
+        .or_else(|_| run(PROCESS_CREATION_FLAGS(0), &mut cmd))
+        .map_err(|e| std::io::Error::from_raw_os_error(e.code().0 & 0xffff))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `eligible` agrees with the integrity label `whoami` reports for this process.
+    #[test]
+    fn eligible_follows_the_integrity_level() {
+        let out = std::process::Command::new("whoami")
+            .args(["/groups", "/fo", "csv"])
+            .output()
+            .unwrap();
+        let groups = String::from_utf8_lossy(&out.stdout);
+        let level = [
+            ("S-1-16-4096", 0x1000),
+            ("S-1-16-8192", 0x2000),
+            ("S-1-16-12288", 0x3000),
+            ("S-1-16-16384", 0x4000),
+        ]
+        .iter()
+        .find(|(sid, _)| groups.contains(sid))
+        .map(|(_, rid)| *rid);
+        assert_eq!(integrity(), level, "{groups}");
+        assert_eq!(eligible(), level.is_some_and(|r| r >= 0x2000));
+        assert!(user_sid().is_some_and(|s| s.starts_with("S-1-5-")));
+    }
+}

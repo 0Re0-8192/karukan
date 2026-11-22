@@ -268,3 +268,15 @@ fn an_unlearned_kana_word_stays_kana_while_typed() {
     type_str(&mut engine, "repo");
     assert_eq!(engine.live_text(), "レポ");
 }
+
+#[test]
+fn the_typed_keys_row_reads_in_kana() {
+    let mut engine = InputMethodEngine::new();
+    engine.converters.kanji = None;
+    type_str(&mut engine, "kaigi");
+    assert_eq!(engine.typed_keys(), "kaigi");
+    assert_eq!(engine.typed_kana(), "かいぎ");
+    // an unfired tail stays as typed
+    type_str(&mut engine, "n");
+    assert_eq!(engine.typed_kana(), "かいぎn");
+}
