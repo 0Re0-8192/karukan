@@ -118,6 +118,20 @@ impl CandidateBuilder {
         self.candidates.insert(at, ac);
     }
 
+    /// Put a candidate at `at` at the latest (or at the end of a shorter
+    /// list). A candidate already in the list with the same text keeps its
+    /// own annotation and is only moved up if it sits behind `at`.
+    fn place_by(&mut self, at: usize, ac: AnnotatedCandidate) {
+        if self.seen.insert(ac.text.clone()) {
+            self.candidates.insert(at.min(self.candidates.len()), ac);
+        } else if let Some(i) = self.candidates.iter().position(|c| c.text == ac.text)
+            && i > at
+        {
+            let existing = self.candidates.remove(i);
+            self.candidates.insert(at, existing);
+        }
+    }
+
     fn is_empty(&self) -> bool {
         self.candidates.is_empty()
     }
@@ -447,12 +461,15 @@ impl InputMethodEngine {
                     .with_description(description),
             );
         }
-        // The keys as typed, last: a rewriter variant that is the same text
-        // (`<>1234`, `[半]記号`) keeps its own annotation.
+        // The keys as typed (`repo`), on the first page at the latest: its
+        // last slot, so the homophones above keep their places while an
+        // ASCII word is still one Ctrl+digit away. A rewriter variant that is
+        // the same text (`<>1234`, `[半]記号`) keeps its own annotation.
         if self.mode.current() != InputMode::Emoji
             && let Some(typed) = self.typed_keys_candidate(reading)
         {
-            builder.push(
+            builder.place_by(
+                CandidateList::DEFAULT_PAGE_SIZE - 1,
                 AnnotatedCandidate::new(typed, CandidateSource::Rewriter)
                     .with_description(Some("入力".to_string())),
             );

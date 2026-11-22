@@ -202,3 +202,46 @@ fn backspace_keeps_the_typed_keys_row_down_a_word() {
         );
     }
 }
+
+#[test]
+fn typed_keys_stay_on_the_first_page() {
+    // こう has a long list of dictionary hits: the keys as typed must not be
+    // pushed off the first page behind them
+    let mut engine = InputMethodEngine::new();
+    engine.converters.kanji = None;
+    type_str(&mut engine, "kou");
+    let list = candidates_after_space(&mut engine);
+    let at = list.iter().position(|t| t == "kou");
+    assert!(
+        at.is_some_and(|i| i < CandidateList::DEFAULT_PAGE_SIZE),
+        "{at:?} {list:?}"
+    );
+}
+
+#[test]
+fn picking_the_typed_keys_learns_the_word() {
+    let mut engine = InputMethodEngine::new();
+    engine.converters.kanji = None;
+    type_str(&mut engine, "repo");
+    let list = candidates_after_space(&mut engine);
+    assert_ne!(list.first().map(String::as_str), Some("repo"), "{list:?}");
+    for _ in 0..list.len() {
+        let InputState::Conversion { candidates, .. } = engine.state() else {
+            panic!("not converting");
+        };
+        if candidates.selected_text() == Some("repo") {
+            break;
+        }
+        engine.process_key(&press(' '));
+    }
+    let result = engine.process_key(&press_key(Keysym::RETURN));
+    assert!(
+        result
+            .actions
+            .iter()
+            .any(|a| matches!(a, EngineAction::Commit(t) if t == "repo")),
+        "{:?}",
+        result.actions
+    );
+    assert!(engine.corrections.is_known("repo"));
+}

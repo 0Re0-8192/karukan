@@ -2,7 +2,8 @@
 //!
 //! Two things come out of a commit:
 //! - `user_english.txt` (data dir): English words the user spelled out on
-//!   purpose (Shift-started words, F9/F10). They are picked up by the English
+//!   purpose (Shift-started words, F9/F10, the typed keys picked from the
+//!   candidate list). They are picked up by the English
 //!   mix from the next keystroke on, so nothing has to be registered by hand.
 //! - `corrections.tsv` (data dir): one line per committed input — the typed
 //!   keys, the reading, the first candidate and the text that was committed,
@@ -130,7 +131,13 @@ impl InputMethodEngine {
                 "fkey"
             }
             Some(_) => "fkey",
-            None if first.is_some_and(|f| f != committed) => "pick",
+            None if first.is_some_and(|f| f != committed) => {
+                // picking the keys as typed (`repo`) spells the word on purpose
+                if committed == raw && is_word(&raw) {
+                    self.corrections.learn_english(&raw);
+                }
+                "pick"
+            }
             None => "conv",
         };
         self.corrections
