@@ -101,8 +101,12 @@ fn two_apps_share_one_server() {
         eprintln!("KARUKAN_IMSERVER not set; skipped");
         return;
     };
-    // SAFETY: set before any thread of this test binary reads the environment
-    unsafe { std::env::set_var("KARUKAN_SHARED", "1") };
+    // `KARUKAN_SHARED=auto` from outside runs the decision an installed text
+    // service makes (integrity level); otherwise the shared server is forced.
+    if std::env::var_os("KARUKAN_SHARED").is_none() {
+        // SAFETY: set before any thread of this test binary reads the environment
+        unsafe { std::env::set_var("KARUKAN_SHARED", "1") };
+    }
     let name = std::path::Path::new(&exe)
         .file_name()
         .unwrap()
@@ -125,6 +129,25 @@ fn two_apps_share_one_server() {
         "the second app started a server of its own"
     );
     eprintln!("first key: app A {first_a:?}, app B {first_b:?}");
+    let servers = std::process::Command::new("wmic")
+        .args([
+            "process",
+            "where",
+            &format!("name='{name}'"),
+            "get",
+            "CommandLine",
+        ])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+        .unwrap_or_default();
+    eprintln!(
+        "servers: {}",
+        servers
+            .split_whitespace()
+            .filter(|w| w.starts_with("karukan-S-"))
+            .collect::<Vec<_>>()
+            .join(" ")
+    );
     assert!(
         first_b < Duration::from_millis(150),
         "app B waited {first_b:?}"

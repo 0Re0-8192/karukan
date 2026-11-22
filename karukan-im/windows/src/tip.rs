@@ -210,10 +210,16 @@ fn server_envs(dir: &std::path::Path) -> Vec<(String, String)> {
 
 /// The shared server is for ordinary desktop apps; a sandboxed or low-integrity
 /// one cannot open it and keeps a private server. Tests that point `KARUKAN_IMSERVER` at a server
-/// get private ones unless they ask (`KARUKAN_SHARED=1`).
+/// get private ones unless they ask (`KARUKAN_SHARED=1`, or `auto` to decide by
+/// this process's integrity level like an installed one).
 fn use_shared() -> bool {
     if std::env::var_os("KARUKAN_IMSERVER").is_some() {
-        return std::env::var_os("KARUKAN_SHARED").is_some_and(|v| v == "1");
+        // "auto": decide as an installed text service would (the medium-integrity test)
+        return match std::env::var("KARUKAN_SHARED").as_deref() {
+            Ok("1") => true,
+            Ok("auto") => crate::shared::eligible(),
+            _ => false,
+        };
     }
     std::env::var_os("KARUKAN_SHARED").is_none_or(|v| v != "0") && crate::shared::eligible()
 }
@@ -254,6 +260,25 @@ pub(crate) fn prewarm_shared() {
             *PREWARMED.lock().unwrap_or_else(|e| e.into_inner()) = Some((name, Instant::now()));
         }
     }
+}
+
+/// What an app does on activation and on its first key, without TSF: decide,
+/// start the shared server, connect, check the server, init, one key. For tests
+/// in sessions with no desktop (over SSH), where a thread manager cannot start.
+pub(crate) fn shared_probe() -> std::result::Result<(String, Duration), String> {
+    if !use_shared() {
+        return Err(format!(
+            "not using the shared server (integrity {:?})",
+            crate::shared::integrity()
+        ));
+    }
+    prewarm_shared();
+    let t = Instant::now();
+    let mut e = connect_shared().ok_or("could not connect (see debug.log)")?;
+    let name = e.pipe_name.clone().unwrap_or_default();
+    e.process_key(0x6b, Mods::default())
+        .ok_or("no reply to a key")?;
+    Ok((name, t.elapsed()))
 }
 
 /// Connect to the shared server, starting it when nobody has yet.

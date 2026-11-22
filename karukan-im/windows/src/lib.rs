@@ -22,6 +22,13 @@ mod shared;
 #[cfg(windows)]
 mod tip;
 
+/// Test hook: activation and a first key against the shared server, without TSF.
+#[cfg(windows)]
+#[doc(hidden)]
+pub fn __shared_probe() -> Result<(String, std::time::Duration), String> {
+    tip::shared_probe()
+}
+
 #[cfg(windows)]
 mod dll {
     use std::ffi::c_void;
