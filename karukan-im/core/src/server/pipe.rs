@@ -4,9 +4,9 @@
 //! cost ~570 MB and half a second of the first key's time for every app. Here one
 //! process serves them all: each connection gets an engine of its own (state,
 //! learning cache), while the system dictionary, the user dictionaries and the
-//! models are the process-global caches every engine shares. Requests from
-//! different apps are serialized — one human types into one app at a time — so
-//! the engines never contend for a model.
+//! models are the process-global caches every engine shares. Connections run in
+//! parallel, so one app never waits for another's conversion; where they meet (a
+//! model's session, the dictionary caches) the shared pieces carry their own locks.
 //!
 //! The pipe accepts only the current user (and SYSTEM), and only local clients.
 //! Its name is chosen by the client and carries what the server was started
@@ -45,8 +45,9 @@ use super::ImServer;
 /// How often a connection's learning cache is saved while it stays open.
 const SAVE_EVERY: Duration = Duration::from_secs(60);
 
-/// One request at a time across all connections.
-static DISPATCH: Mutex<()> = Mutex::new(());
+/// Learning-cache saves one at a time: they merge with the file through a temp
+/// file named after the process, which every connection here shares.
+static SAVING: Mutex<()> = Mutex::new(());
 
 /// The current user's SID as a string (`S-1-5-21-…`).
 pub fn current_user_sid() -> anyhow::Result<String> {
@@ -241,10 +242,7 @@ fn serve_one(file: File) -> anyhow::Result<()> {
         if line.trim().is_empty() {
             continue;
         }
-        let response = {
-            let _one_at_a_time = DISPATCH.lock().unwrap_or_else(|e| e.into_inner());
-            server.handle_line(&line)
-        };
+        let response = server.handle_line(&line);
         if let Some(response) = response
             && writeln!(writer, "{response}").is_err()
         {
@@ -255,12 +253,12 @@ fn serve_one(file: File) -> anyhow::Result<()> {
         // (after the reply, so the key is not kept waiting; a no-op when clean).
         if last_save.elapsed() >= SAVE_EVERY {
             last_save = Instant::now();
-            let _one_at_a_time = DISPATCH.lock().unwrap_or_else(|e| e.into_inner());
+            let _one_at_a_time = SAVING.lock().unwrap_or_else(|e| e.into_inner());
             server.save_learning();
         }
     }
     // the app is gone: what it learned is merged into the file
-    let _one_at_a_time = DISPATCH.lock().unwrap_or_else(|e| e.into_inner());
+    let _one_at_a_time = SAVING.lock().unwrap_or_else(|e| e.into_inner());
     server.save_learning();
     Ok(())
 }

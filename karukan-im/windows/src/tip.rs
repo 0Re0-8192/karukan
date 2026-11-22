@@ -34,8 +34,9 @@ const ENGINE_RETRY: Duration = Duration::from_secs(10);
 const STAMP_CHECK: Duration = Duration::from_secs(60);
 /// How long a first key waits for a shared server it had to start.
 const SHARED_START: Duration = Duration::from_secs(3);
-/// After the shared server failed once, private servers for this long.
-const SHARED_RETRY: Duration = Duration::from_secs(60);
+/// After the shared server failed once, private servers for this long (a failure
+/// can cost a first key up to `SHARED_START`, which must not recur every minute).
+const SHARED_RETRY: Duration = Duration::from_secs(30 * 60);
 
 pub struct State {
     tid: u32,
@@ -53,6 +54,8 @@ pub struct State {
     aux: Option<String>,
     composition: Option<ITfComposition>,
     has_preedit: bool,
+    /// The candidate window stands at the caret or the window, not at the text.
+    anchor_provisional: bool,
     open: bool,
     context: Option<ITfContext>,
     atom_input: u32,
@@ -73,6 +76,7 @@ impl State {
             aux: None,
             composition: None,
             has_preedit: false,
+            anchor_provisional: false,
             open: true,
             context: None,
             atom_input: 0,
@@ -80,12 +84,10 @@ impl State {
         }
     }
 
-    fn engine(&mut self) -> Option<&mut EngineClient> {
-        // The server reads the dictionaries once at start-up, so a long-lived app
-        // (a browser) would never see a new dict.bin or the curate job's additions.
-        // Between compositions, move to a fresh server when those files (or the
-        // server itself) change, checked once a minute. The English word list is
-        // not one of them: the server reloads it in place.
+    /// Let go of a server started for files that have changed since (checked at
+    /// most once a minute, never mid-composition). Also run on focus loss, so an
+    /// app left idle does not keep an outdated shared server alive.
+    fn drop_if_stale(&mut self) {
         if self.engine.is_some() && !self.has_preedit && self.stamp_checked.elapsed() >= STAMP_CHECK
         {
             self.stamp_checked = Instant::now();
@@ -95,6 +97,15 @@ impl State {
                 self.engine = None;
             }
         }
+    }
+
+    fn engine(&mut self) -> Option<&mut EngineClient> {
+        // The server reads the dictionaries once at start-up, so a long-lived app
+        // (a browser) would never see a new dict.bin or the curate job's additions.
+        // Between compositions, move to a fresh server when those files (or the
+        // server itself) change, checked once a minute. The English word list is
+        // not one of them: the server reloads it in place.
+        self.drop_if_stale();
         let dead = match self.engine.as_mut() {
             Some(e) => !e.is_alive(),
             None => true,
@@ -224,6 +235,9 @@ fn pipe_name(dir: &std::path::Path) -> Option<String> {
     Some(format!("karukan-{sid}-{level:x}-{h:016x}"))
 }
 
+/// The shared server this process started last, and when.
+static PREWARMED: std::sync::Mutex<Option<(String, Instant)>> = std::sync::Mutex::new(None);
+
 /// Start the shared server if it is not running yet; never waits for it.
 /// Called when an app activates the text service, so the dictionaries and models
 /// are loaded by the time the user types.
@@ -234,7 +248,11 @@ pub(crate) fn prewarm_shared() {
     let Some(dir) = crate::dll_dir() else { return };
     let Some(name) = pipe_name(&dir) else { return };
     if !crate::shared::pipe_exists(&name) {
-        let _ = crate::shared::spawn_detached(&server_exe(&dir), &name, &server_envs(&dir));
+        let r = crate::shared::spawn_detached(&server_exe(&dir), &name, &server_envs(&dir));
+        diag(&format!("started {name} ahead of the first key: {r:?}"));
+        if r.is_ok() {
+            *PREWARMED.lock().unwrap_or_else(|e| e.into_inner()) = Some((name, Instant::now()));
+        }
     }
 }
 
@@ -250,8 +268,15 @@ fn connect_shared() -> Option<EngineClient> {
             Err(err) => {
                 // 2: no such pipe yet; 231: all instances busy (another app connecting)
                 let code = err.raw_os_error().unwrap_or(0);
-                if code == 2 && !spawned {
+                // a server started ahead of the first key may not have its pipe yet
+                let prewarmed = PREWARMED
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .as_ref()
+                    .is_some_and(|(n, t)| *n == name && t.elapsed() < SHARED_START);
+                if code == 2 && !spawned && !prewarmed {
                     spawned = true;
+                    diag(&format!("{name} not running: starting it"));
                     if let Err(err) =
                         crate::shared::spawn_detached(&server_exe(&dir), &name, &server_envs(&dir))
                     {
@@ -270,6 +295,18 @@ fn connect_shared() -> Option<EngineClient> {
             }
         }
     };
+    // The name is predictable, so make sure it is our server on the other end, not
+    // something another account set up first to read the keys.
+    let ours = |p: &std::path::Path| p.canonicalize().ok();
+    let server = e.server_pid().and_then(crate::shared::process_image);
+    if server.as_deref().and_then(ours).is_none()
+        || server.as_deref().and_then(ours) != ours(&server_exe(&dir))
+    {
+        diag(&format!(
+            "{name} is served by {server:?}, not karukan-imserver: not used"
+        ));
+        return None;
+    }
     if !e.init() {
         diag(&format!("{name} did not answer init"));
         return None;
@@ -593,10 +630,20 @@ fn apply_actions(
                 page,
                 total_pages,
             } => {
-                let anchor = if cand::is_visible() {
+                // Placed once per composition, unless it went to a stand-in spot (the
+                // caret, the window) because the text's own position was not known
+                // yet: then ask again each time, and move once it is.
+                let provisional = state.borrow().anchor_provisional;
+                let anchor = if cand::is_visible() && !provisional {
                     None
                 } else {
-                    text_anchor(state, ec, ctx)
+                    match text_anchor(state, ec, ctx) {
+                        Some((a, exact)) => {
+                            state.borrow_mut().anchor_provisional = !exact;
+                            (exact || !cand::is_visible()).then_some(a)
+                        }
+                        None => None,
+                    }
                 };
                 cand::show(candidates, *cursor, *page, *total_pages, anchor);
             }
@@ -607,7 +654,9 @@ fn apply_actions(
     Ok(())
 }
 
-fn text_anchor(state: &Rc<RefCell<State>>, ec: u32, ctx: &ITfContext) -> Option<Anchor> {
+/// Where the composition is on screen, and whether that is its own position
+/// (`true`) or a stand-in (the caret, the window).
+fn text_anchor(state: &Rc<RefCell<State>>, ec: u32, ctx: &ITfContext) -> Option<(Anchor, bool)> {
     let comp = state.borrow().composition.clone()?;
     unsafe {
         let range = comp.GetRange().ok()?;
@@ -620,11 +669,14 @@ fn text_anchor(state: &Rc<RefCell<State>>, ec: u32, ctx: &ITfContext) -> Option<
         // rectangle. Either way the window must not fall back on wherever it last
         // was, which can be another field or another app.
         if got.is_ok() && rc.bottom > rc.top && !(rc.left == 0 && rc.top == 0) {
-            return Some(Anchor {
-                x: rc.left,
-                top: rc.top,
-                bottom: rc.bottom,
-            });
+            return Some((
+                Anchor {
+                    x: rc.left,
+                    top: rc.top,
+                    bottom: rc.bottom,
+                },
+                true,
+            ));
         }
         let hwnd = view.GetWnd().ok();
         let fallback = caret_anchor(hwnd);
@@ -636,7 +688,7 @@ fn text_anchor(state: &Rc<RefCell<State>>, ec: u32, ctx: &ITfContext) -> Option<
             rc.bottom,
             fallback.map(|a| (a.x, a.top, a.bottom))
         ));
-        fallback
+        fallback.map(|a| (a, false))
     }
 }
 
@@ -830,14 +882,21 @@ impl TextService_Impl {
             let ctx = st.context.clone();
             st.typed.clear();
             st.aux = None;
-            // Never start a server just to commit nothing: an app that merely
-            // gained and lost focus has none, and starting one costs ~650 MB and a
-            // second on the UI thread.
-            let res = st
-                .engine
-                .as_mut()
-                .and_then(|e| e.is_alive().then_some(e))
-                .and_then(|e| e.commit());
+            // Never start a server just to commit nothing, and never wait for one
+            // either: with nothing typed, focus moves on at once and the engine is
+            // only told to reset (the shared server may be busy with another app).
+            let has_preedit = st.has_preedit;
+            let res = match st.engine.as_mut().filter(|_| has_preedit) {
+                Some(e) => e.is_alive().then(|| e.commit()).flatten(),
+                None => {
+                    if let Some(e) = st.engine.as_mut() {
+                        e.reset_nowait();
+                    }
+                    None
+                }
+            };
+            st.anchor_provisional = false;
+            st.drop_if_stale();
             (res, ctx)
         };
         if let (Some(res), Some(ctx)) = (res, ctx) {

@@ -176,6 +176,15 @@ impl EngineClient {
         })
     }
 
+    /// The process on the other end of the shared server's pipe.
+    #[cfg(windows)]
+    pub fn server_pid(&self) -> Option<u32> {
+        match self.link.as_ref()? {
+            Link::Pipe(p) => p.server_pid(),
+            Link::Child(c) => Some(c.id()),
+        }
+    }
+
     /// Running and answering: a server that timed out counts as dead, so the
     /// caller replaces it instead of waiting on it again.
     pub fn is_alive(&mut self) -> bool {
@@ -258,6 +267,11 @@ impl EngineClient {
 
     pub fn commit(&mut self) -> Option<KeyResult> {
         serde_json::from_value(self.send("commit", json!({}), true)?).ok()
+    }
+
+    /// Reset without waiting for the answer.
+    pub fn reset_nowait(&mut self) {
+        let _ = self.send("reset", json!({}), false);
     }
 
     pub fn reset(&mut self) {
@@ -345,6 +359,16 @@ pub mod pipe {
             }
             .map_err(to_io)?;
             Ok(Self(h))
+        }
+
+        /// The server's process id.
+        pub fn server_pid(&self) -> Option<u32> {
+            let mut pid = 0u32;
+            unsafe {
+                windows::Win32::System::Pipes::GetNamedPipeServerProcessId(self.0, &mut pid)
+                    .ok()?;
+            }
+            Some(pid)
         }
 
         /// Make the pending read return, so the reader thread lets go of the handle.

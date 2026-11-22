@@ -77,6 +77,26 @@ pub fn eligible() -> bool {
     })
 }
 
+/// The full path of process `pid`'s image, or None when it cannot be read (it
+/// belongs to someone else, or is gone).
+pub fn process_image(pid: u32) -> Option<std::path::PathBuf> {
+    use windows::Win32::System::Threading::{
+        OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
+        QueryFullProcessImageNameW,
+    };
+    unsafe {
+        let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
+        let mut buf = [0u16; 1024];
+        let mut n = buf.len() as u32;
+        let ok = QueryFullProcessImageNameW(h, PROCESS_NAME_WIN32, PWSTR(buf.as_mut_ptr()), &mut n);
+        let _ = CloseHandle(h);
+        ok.ok()?;
+        Some(std::path::PathBuf::from(String::from_utf16_lossy(
+            &buf[..n as usize],
+        )))
+    }
+}
+
 /// A server already listens on the name (checked without connecting to it).
 pub fn pipe_exists(name: &str) -> bool {
     let path = HSTRING::from(format!(r"\\.\pipe\{name}"));
@@ -107,6 +127,9 @@ pub fn spawn_detached(exe: &Path, name: &str, envs: &[(String, String)]) -> std:
     }
     block.push(0);
     let exe_w = HSTRING::from(exe.as_os_str());
+    // run from the install folder: a server living for hours must not hold the
+    // folder of whichever app started it open
+    let cwd = HSTRING::from(exe.parent().unwrap_or(exe).as_os_str());
     let si = STARTUPINFOW {
         cb: std::mem::size_of::<STARTUPINFOW>() as u32,
         ..Default::default()
@@ -121,7 +144,7 @@ pub fn spawn_detached(exe: &Path, name: &str, envs: &[(String, String)]) -> std:
             false,
             flags | CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT,
             Some(block.as_ptr().cast()),
-            PCWSTR::null(),
+            PCWSTR(cwd.as_ptr()),
             &si,
             &mut pi,
         )

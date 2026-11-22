@@ -112,13 +112,16 @@ fn two_apps_share_one_server() {
 
     let (first_a, text_a) = std::thread::spawn(app).join().unwrap();
     assert_eq!(text_a, "キョウ");
-    assert_eq!(running(&name), 1, "one server after the first app");
+    // (the karukan registered on this PC may activate in this process too and
+    // start a server of its own, so count what app B adds, not the total)
+    let after_a = running(&name);
+    assert!(after_a >= 1, "no server after the first app");
 
     let (first_b, text_b) = std::thread::spawn(app).join().unwrap();
     assert_eq!(text_b, "キョウ");
     assert_eq!(
         running(&name),
-        1,
+        after_a,
         "the second app started a server of its own"
     );
     eprintln!("first key: app A {first_a:?}, app B {first_b:?}");
