@@ -44,7 +44,12 @@ impl Corrections {
     /// Load the learned words.
     pub(super) fn open(dir: PathBuf) -> Self {
         let english = std::fs::read_to_string(dir.join("user_english.txt"))
-            .map(|t| t.lines().map(|l| l.trim().to_ascii_lowercase()).filter(|w| is_word(w)).collect())
+            .map(|t| {
+                t.lines()
+                    .map(|l| l.trim().to_ascii_lowercase())
+                    .filter(|w| is_word(w))
+                    .collect()
+            })
             .unwrap_or_default();
         Self {
             dir: Some(dir),

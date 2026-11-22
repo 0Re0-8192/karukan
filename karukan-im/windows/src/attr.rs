@@ -6,17 +6,18 @@ use std::cell::Cell;
 use windows::Win32::Foundation::{E_INVALIDARG, S_FALSE};
 use windows::Win32::UI::TextServices::{
     IEnumTfDisplayAttributeInfo, IEnumTfDisplayAttributeInfo_Impl, ITfDisplayAttributeInfo,
-    ITfDisplayAttributeInfo_Impl, TF_ATTR_INPUT, TF_ATTR_TARGET_CONVERTED, TF_CT_NONE,
-    TF_DA_COLOR, TF_DISPLAYATTRIBUTE, TF_LS_DOT, TF_LS_SOLID,
+    ITfDisplayAttributeInfo_Impl, TF_ATTR_INPUT, TF_ATTR_TARGET_CONVERTED, TF_CT_NONE, TF_DA_COLOR,
+    TF_DISPLAYATTRIBUTE, TF_LS_DOT, TF_LS_SOLID,
 };
 use windows::core::{BOOL, BSTR, GUID, Ref, Result, implement};
 
 use crate::guids::{GUID_ATTR_CONVERTED, GUID_ATTR_INPUT};
 
 fn no_color() -> TF_DA_COLOR {
-    let mut c = TF_DA_COLOR::default();
-    c.r#type = TF_CT_NONE;
-    c
+    TF_DA_COLOR {
+        r#type: TF_CT_NONE,
+        ..Default::default()
+    }
 }
 
 pub fn input_attr() -> TF_DISPLAYATTRIBUTE {
@@ -104,6 +105,7 @@ pub struct EnumAttr {
 }
 
 impl EnumAttr {
+    #[allow(clippy::new_ret_no_self)] // a COM object is handed out as its interface
     pub fn new() -> IEnumTfDisplayAttributeInfo {
         EnumAttr { pos: Cell::new(0) }.into()
     }

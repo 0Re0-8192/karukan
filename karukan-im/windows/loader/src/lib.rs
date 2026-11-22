@@ -12,7 +12,9 @@ use std::os::windows::ffi::OsStrExt;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicIsize, Ordering};
 
-use windows::Win32::Foundation::{CLASS_E_CLASSNOTAVAILABLE, E_FAIL, E_POINTER, HINSTANCE, HMODULE, S_FALSE};
+use windows::Win32::Foundation::{
+    CLASS_E_CLASSNOTAVAILABLE, E_FAIL, E_POINTER, HINSTANCE, HMODULE, S_FALSE,
+};
 use windows::Win32::System::LibraryLoader::{
     GetModuleFileNameW, GetProcAddress, LOAD_WITH_ALTERED_SEARCH_PATH, LoadLibraryExW,
 };
@@ -20,13 +22,19 @@ use windows::core::{BOOL, GUID, HRESULT, PCSTR, PCWSTR, s};
 
 static MODULE: AtomicIsize = AtomicIsize::new(0);
 
-type GetClassObject = unsafe extern "system" fn(*const GUID, *const GUID, *mut *mut c_void) -> HRESULT;
+type GetClassObject =
+    unsafe extern "system" fn(*const GUID, *const GUID, *mut *mut c_void) -> HRESULT;
 type Plain = unsafe extern "system" fn() -> HRESULT;
 type RegisterAs = unsafe extern "system" fn(*const u16) -> HRESULT;
 
 fn own_path() -> Option<PathBuf> {
     let mut buf = [0u16; 1024];
-    let n = unsafe { GetModuleFileNameW(Some(HMODULE(MODULE.load(Ordering::Relaxed) as *mut c_void)), &mut buf) } as usize;
+    let n = unsafe {
+        GetModuleFileNameW(
+            Some(HMODULE(MODULE.load(Ordering::Relaxed) as *mut c_void)),
+            &mut buf,
+        )
+    } as usize;
     (n > 0 && n < buf.len()).then(|| PathBuf::from(String::from_utf16_lossy(&buf[..n])))
 }
 
@@ -38,7 +46,11 @@ fn newest_impl() -> Option<PathBuf> {
         .flatten()
         .map(|e| e.path())
         .filter(|p| {
-            let n = p.file_name().and_then(|n| n.to_str()).unwrap_or("").to_ascii_lowercase();
+            let n = p
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("")
+                .to_ascii_lowercase();
             n.starts_with("karukan_tsf_impl") && n.ends_with(".dll")
         })
         .max_by_key(|p| p.file_name().map(|n| n.to_ascii_lowercase()))
@@ -65,12 +77,18 @@ extern "system" fn DllMain(hinst: HINSTANCE, reason: u32, _reserved: *mut c_void
 }
 
 #[unsafe(no_mangle)]
-extern "system" fn DllGetClassObject(rclsid: *const GUID, riid: *const GUID, ppv: *mut *mut c_void) -> HRESULT {
+extern "system" fn DllGetClassObject(
+    rclsid: *const GUID,
+    riid: *const GUID,
+    ppv: *mut *mut c_void,
+) -> HRESULT {
     if rclsid.is_null() || riid.is_null() || ppv.is_null() {
         return E_POINTER;
     }
     unsafe { *ppv = std::ptr::null_mut() };
-    let Some(m) = load() else { return CLASS_E_CLASSNOTAVAILABLE };
+    let Some(m) = load() else {
+        return CLASS_E_CLASSNOTAVAILABLE;
+    };
     match unsafe { proc::<GetClassObject>(m, s!("DllGetClassObject")) } {
         Some(f) => unsafe { f(rclsid, riid, ppv) },
         None => CLASS_E_CLASSNOTAVAILABLE,
@@ -83,7 +101,9 @@ extern "system" fn DllCanUnloadNow() -> HRESULT {
 }
 
 fn forward_register(export: PCSTR) -> HRESULT {
-    let (Some(m), Some(me)) = (load(), own_path()) else { return E_FAIL };
+    let (Some(m), Some(me)) = (load(), own_path()) else {
+        return E_FAIL;
+    };
     // the registry must point at this file, not at the implementation
     let w: Vec<u16> = me.as_os_str().encode_wide().chain(Some(0)).collect();
     match unsafe { proc::<RegisterAs>(m, export) } {

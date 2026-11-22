@@ -81,7 +81,11 @@ fn output(cmd: &[u8]) -> Vec<(u32, Vec<u8>)> {
 }
 
 fn bridge() -> Bridge<Fake> {
-    let f = Fake { queue: VecDeque::new(), state: "empty", calls: vec![] };
+    let f = Fake {
+        queue: VecDeque::new(),
+        state: "empty",
+        calls: vec![],
+    };
     Bridge::new(f)
 }
 
@@ -98,12 +102,22 @@ fn composing(text: &str, cands: &[&str]) -> Value {
 fn claims_letters_and_builds_preedit_and_candidates() {
     let mut b = bridge();
     b.backend().queue.push_back(composing("き", &["き", "木"]));
-    let out = b.handle(&key_cmd(3, |k| k.uint(1, 'k' as u64))).expect("claimed");
+    let out = b
+        .handle(&key_cmd(3, |k| k.uint(1, 'k' as u64)))
+        .expect("claimed");
     let o = output(&out);
     assert!(o.iter().any(|(f, _)| *f == 5), "preedit present");
-    assert!(o.iter().any(|(f, _)| *f == 14), "all_candidate_words present");
+    assert!(
+        o.iter().any(|(f, _)| *f == 14),
+        "all_candidate_words present"
+    );
     // surrounding text was passed once, before the key
-    assert!(b.backend().calls.iter().any(|c| c.starts_with("set_surrounding_text")));
+    assert!(
+        b.backend()
+            .calls
+            .iter()
+            .any(|c| c.starts_with("set_surrounding_text"))
+    );
 }
 
 #[test]
@@ -134,7 +148,9 @@ fn owner_sticks_until_empty_and_commits() {
     b.backend().queue.push_back(composing("木", &["木"]));
     assert!(b.handle(&key_cmd(3, |k| k.uint(3, 4))).is_some());
     // Enter commits
-    b.backend().queue.push_back(json!({"consumed": true, "_state": "empty", "actions": [
+    b.backend()
+        .queue
+        .push_back(json!({"consumed": true, "_state": "empty", "actions": [
         {"type": "hide_candidates"}, {"type": "commit", "text": "木"}]}));
     let out = b.handle(&key_cmd(3, |k| k.uint(3, 5))).unwrap();
     let o = output(&out);
@@ -181,7 +197,10 @@ fn mozc_composition_keeps_ownership() {
     let mut reply = W::new();
     reply.bytes(1, &[0x08, 0x03]);
     reply.bytes(2, &mo.0);
-    assert!(b.observe(&key_cmd(3, |k| k.uint(1, 'a' as u64)), &reply.0).is_none());
+    assert!(
+        b.observe(&key_cmd(3, |k| k.uint(1, 'a' as u64)), &reply.0)
+            .is_none()
+    );
     // While Mozc composes, even letters stay with Mozc.
     assert!(b.handle(&key_cmd(3, |k| k.uint(1, 'k' as u64))).is_none());
 }
@@ -191,7 +210,9 @@ fn mode_switch_commits_then_injects_into_mozc_reply() {
     let mut b = bridge();
     b.backend().queue.push_back(composing("き", &[]));
     b.handle(&key_cmd(3, |k| k.uint(1, 'k' as u64))).unwrap();
-    b.backend().queue.push_back(json!({"consumed": true, "_state": "empty", "actions": [
+    b.backend()
+        .queue
+        .push_back(json!({"consumed": true, "_state": "empty", "actions": [
         {"type": "commit", "text": "き"}]}));
     // SWITCH_COMPOSITION_MODE: passes to Mozc ...
     let c = cmd_cmd(5, None);
@@ -211,12 +232,21 @@ fn mode_switch_commits_then_injects_into_mozc_reply() {
 #[test]
 fn select_candidate_by_id() {
     let mut b = bridge();
-    b.backend().queue.push_back(composing("きょう", &["今日", "京", "教"]));
+    b.backend()
+        .queue
+        .push_back(composing("きょう", &["今日", "京", "教"]));
     b.handle(&key_cmd(3, |k| k.uint(1, 'k' as u64))).unwrap();
-    b.backend().queue.push_back(json!({"consumed": true, "_state": "empty", "actions": [
+    b.backend()
+        .queue
+        .push_back(json!({"consumed": true, "_state": "empty", "actions": [
         {"type": "commit", "text": "京"}]}));
     let out = b.handle(&cmd_cmd(7, Some(1))).unwrap();
-    assert!(b.backend().calls.iter().any(|c| c == r#"select_candidate {"page_index":1}"#));
+    assert!(
+        b.backend()
+            .calls
+            .iter()
+            .any(|c| c == r#"select_candidate {"page_index":1}"#)
+    );
     let o = output(&out);
     assert!(o.iter().any(|(f, _)| *f == 4));
 }

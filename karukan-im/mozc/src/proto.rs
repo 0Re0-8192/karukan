@@ -27,7 +27,8 @@ impl<'a> Val<'a> {
         }
     }
     pub fn as_str(&self) -> Option<String> {
-        self.as_bytes().map(|b| String::from_utf8_lossy(b).into_owned())
+        self.as_bytes()
+            .map(|b| String::from_utf8_lossy(b).into_owned())
     }
 }
 
@@ -89,7 +90,11 @@ fn parse_until<'a>(
                 *pos = p;
             }
             4 => {
-                return if end_group == Some(field) { Some(out) } else { None };
+                return if end_group == Some(field) {
+                    Some(out)
+                } else {
+                    None
+                };
             }
             5 => {
                 let b = buf.get(*pos..*pos + 4)?;
@@ -113,7 +118,11 @@ fn varint_len(mut v: u64) -> usize {
 
 /// First value of `field` (last wins for scalars in protobuf, but our fields are not repeated).
 pub fn get<'a>(fields: &[(u32, Val<'a>)], field: u32) -> Option<Val<'a>> {
-    fields.iter().rev().find(|(f, _)| *f == field).map(|(_, v)| *v)
+    fields
+        .iter()
+        .rev()
+        .find(|(f, _)| *f == field)
+        .map(|(_, v)| *v)
 }
 
 /// Repeated varint field (accepts both unpacked and packed encodings).
@@ -208,7 +217,9 @@ mod tests {
         let f = parse(&w.0).unwrap();
         assert_eq!(f.len(), 3);
         assert_eq!(get(&f, 1), Some(Val::Varint(300)));
-        let Val::Group(body) = get(&f, 2).unwrap() else { panic!() };
+        let Val::Group(body) = get(&f, 2).unwrap() else {
+            panic!()
+        };
         let g = parse(body).unwrap();
         assert_eq!(get(&g, 4).unwrap().as_str().unwrap(), "あ");
         assert_eq!(get(&f, 5).unwrap().as_str().unwrap(), "x");

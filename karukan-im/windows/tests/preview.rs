@@ -27,7 +27,11 @@ fn render_previews() {
         item("ｶﾞｿﾞｳ", Some("半角カタカナ")),
         item("画像を", None),
     ];
-    for (name, dark, scale) in [("dark", true, 1.0f32), ("light", false, 1.0), ("dark150", true, 1.5)] {
+    for (name, dark, scale) in [
+        ("dark", true, 1.0f32),
+        ("light", false, 1.0),
+        ("dark150", true, 1.5),
+    ] {
         let (w, h, buf) = karukan_tsf::__render_candidate_preview(
             &items,
             1,

@@ -28,7 +28,16 @@ fn main() {
                     total_pages: 1,
                 }),
             };
-            println!("{}", hex(&output::encode_command(&[0x08, 0x03], Some(9), true, None, &frame)));
+            println!(
+                "{}",
+                hex(&output::encode_command(
+                    &[0x08, 0x03],
+                    Some(9),
+                    true,
+                    None,
+                    &frame
+                ))
+            );
             let suggest = Frame {
                 preedit: Some(PreeditView {
                     text: "きょう".into(),
@@ -42,10 +51,25 @@ fn main() {
                     total_pages: 1,
                 }),
             };
-            println!("{}", hex(&output::encode_command(&[0x08, 0x03], Some(9), true, None, &suggest)));
             println!(
                 "{}",
-                hex(&output::encode_command(&[0x08, 0x03], Some(9), true, Some("今日"), &Frame::default()))
+                hex(&output::encode_command(
+                    &[0x08, 0x03],
+                    Some(9),
+                    true,
+                    None,
+                    &suggest
+                ))
+            );
+            println!(
+                "{}",
+                hex(&output::encode_command(
+                    &[0x08, 0x03],
+                    Some(9),
+                    true,
+                    Some("今日"),
+                    &Frame::default()
+                ))
             );
         }
         Some("dec") => {

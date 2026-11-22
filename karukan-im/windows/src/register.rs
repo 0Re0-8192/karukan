@@ -42,7 +42,8 @@ unsafe fn set_str(key: HKEY, name: Option<&str>, value: &str) -> Result<()> {
 }
 
 pub fn register() -> Result<()> {
-    let path = crate::dll_path().ok_or_else(|| windows::core::Error::from_hresult(windows::Win32::Foundation::E_FAIL))?;
+    let path = crate::dll_path()
+        .ok_or_else(|| windows::core::Error::from_hresult(windows::Win32::Foundation::E_FAIL))?;
     unsafe {
         // COM server
         let base = format!("CLSID\\{}", clsid_string());
@@ -148,7 +149,13 @@ pub fn unregister() -> Result<()> {
         // UnregisterProfile / UnregisterCategory leave the TIP's key behind, empty
         let _ = RegDeleteTreeW(
             HKEY_LOCAL_MACHINE,
-            PCWSTR(wz(&format!("SOFTWARE\\Microsoft\\CTF\\TIP\\{}", clsid_string())).as_ptr()),
+            PCWSTR(
+                wz(&format!(
+                    "SOFTWARE\\Microsoft\\CTF\\TIP\\{}",
+                    clsid_string()
+                ))
+                .as_ptr(),
+            ),
         );
     }
     Ok(())

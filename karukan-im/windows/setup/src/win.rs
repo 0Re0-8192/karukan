@@ -263,10 +263,10 @@ fn default_dir() -> PathBuf {
 
 /// An existing install: the Apps entry, else the folder of the registered loader DLL.
 fn existing_dir() -> Option<PathBuf> {
-    if let Some(d) = sys::app_install_location() {
-        if d.join(LOADER).is_file() {
-            return Some(d);
-        }
+    if let Some(d) = sys::app_install_location()
+        && d.join(LOADER).is_file()
+    {
+        return Some(d);
     }
     sys::com_server_path()
         .and_then(|p| p.parent().map(Path::to_path_buf))
@@ -293,13 +293,13 @@ fn install(o: &Opts) -> Result<Option<String>> {
         .as_ref()
         .map(|m| m.version.clone())
         .or_else(|| found.as_ref().map(|_| "?".into()));
-    if let Some(m) = &old {
-        if version_key(&m.version) > version_key(VERSION) {
-            bail!(
-                "karukan {} が入っています(このインストーラーは {VERSION})。",
-                m.version
-            );
-        }
+    if let Some(m) = &old
+        && version_key(&m.version) > version_key(VERSION)
+    {
+        bail!(
+            "karukan {} が入っています(このインストーラーは {VERSION})。",
+            m.version
+        );
     }
     if !o.quiet {
         let update = old_version.is_some() || dir.join(LOADER).is_file();

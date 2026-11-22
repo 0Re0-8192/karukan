@@ -15,11 +15,14 @@ use windows::Win32::UI::TextServices::{
     ITfDisplayAttributeInfo, ITfDisplayAttributeProvider, ITfDisplayAttributeProvider_Impl,
     ITfEditSession, ITfEditSession_Impl, ITfInsertAtSelection, ITfKeyEventSink,
     ITfKeyEventSink_Impl, ITfKeystrokeMgr, ITfRange, ITfTextInputProcessor,
-    ITfTextInputProcessorEx, ITfTextInputProcessorEx_Impl, ITfTextInputProcessor_Impl,
-    ITfThreadMgr, TF_AE_NONE, TF_ANCHOR_END, TF_ANCHOR_START, TF_DEFAULT_SELECTION, TF_ES_ASYNCDONTCARE, TF_ES_READ,
-    TF_ES_READWRITE, TF_ES_SYNC, TF_IAS_QUERYONLY, TF_SELECTION, TF_SELECTIONSTYLE,
+    ITfTextInputProcessor_Impl, ITfTextInputProcessorEx, ITfTextInputProcessorEx_Impl,
+    ITfThreadMgr, TF_AE_NONE, TF_ANCHOR_END, TF_ANCHOR_START, TF_DEFAULT_SELECTION,
+    TF_ES_ASYNCDONTCARE, TF_ES_READ, TF_ES_READWRITE, TF_ES_SYNC, TF_IAS_QUERYONLY, TF_SELECTION,
+    TF_SELECTIONSTYLE,
 };
-use windows::core::{BOOL, BOOL as CoreBool, GUID, Interface, IUnknownImpl, Ref, Result, implement};
+use windows::core::{
+    BOOL, BOOL as CoreBool, GUID, IUnknownImpl, Interface, Ref, Result, implement,
+};
 
 use crate::attr::{AttrInfo, EnumAttr};
 use crate::cand::{self, Anchor};
@@ -74,9 +77,7 @@ impl State {
         // Between compositions, swap in a fresh server when those files change (checked
         // once a minute; they change a few times a day); the old one saves its learning
         // cache on the way out.
-        if self.engine.is_some()
-            && !self.has_preedit
-            && self.stamp_checked.elapsed() >= STAMP_CHECK
+        if self.engine.is_some() && !self.has_preedit && self.stamp_checked.elapsed() >= STAMP_CHECK
         {
             self.stamp_checked = Instant::now();
             if data_stamp() != self.engine_stamp {
@@ -89,10 +90,10 @@ impl State {
         };
         if dead {
             self.engine = None;
-            if let Some(t) = self.engine_failed {
-                if t.elapsed() < ENGINE_RETRY {
-                    return None;
-                }
+            if let Some(t) = self.engine_failed
+                && t.elapsed() < ENGINE_RETRY
+            {
+                return None;
             }
             let stamp = data_stamp();
             match spawn_engine() {
@@ -156,7 +157,10 @@ fn spawn_engine() -> Option<EngineClient> {
         }
     };
     if !e.init() {
-        diag(&format!("{} started but did not answer init", exe.display()));
+        diag(&format!(
+            "{} started but did not answer init",
+            exe.display()
+        ));
         return None;
     }
     Some(e)
@@ -185,7 +189,11 @@ fn diag(msg: &str) {
     if std::fs::metadata(&log).is_ok_and(|m| m.len() > 1_000_000) {
         return;
     }
-    let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(log) else {
+    let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log)
+    else {
         return;
     };
     let secs = std::time::SystemTime::now()
@@ -271,7 +279,11 @@ fn request_session(
         sink: sink.clone(),
     }
     .into();
-    let flags = if sync { TF_ES_SYNC } else { TF_ES_ASYNCDONTCARE } | TF_ES_READWRITE;
+    let flags = if sync {
+        TF_ES_SYNC
+    } else {
+        TF_ES_ASYNCDONTCARE
+    } | TF_ES_READWRITE;
     let hr = unsafe { ctx.RequestEditSession(tid, &session, flags) };
     let ok = matches!(hr, Ok(h) if h.is_ok());
     if !ok {
@@ -286,9 +298,12 @@ fn request_session(
             sink: sink.clone(),
         }
         .into();
-        let hr2 = unsafe { ctx.RequestEditSession(tid, &session, TF_ES_ASYNCDONTCARE | TF_ES_READWRITE) };
+        let hr2 =
+            unsafe { ctx.RequestEditSession(tid, &session, TF_ES_ASYNCDONTCARE | TF_ES_READWRITE) };
         if !matches!(hr2, Ok(h) if h.is_ok()) {
-            diag(&format!("RequestEditSession async fallback failed: {hr2:?}"));
+            diag(&format!(
+                "RequestEditSession async fallback failed: {hr2:?}"
+            ));
         }
     }
 }
@@ -335,7 +350,11 @@ fn read_left(ec: u32, ctx: &ITfContext) -> Result<String> {
 /// (no text store, a game, a password field).
 pub(crate) fn read_left_context(ctx: &ITfContext, tid: u32) -> Option<String> {
     let out = Rc::new(RefCell::new(None));
-    let session: ITfEditSession = ReadLeftSession { ctx: ctx.clone(), out: out.clone() }.into();
+    let session: ITfEditSession = ReadLeftSession {
+        ctx: ctx.clone(),
+        out: out.clone(),
+    }
+    .into();
     let hr = unsafe { ctx.RequestEditSession(tid, &session, TF_ES_SYNC | TF_ES_READ) };
     if !matches!(hr, Ok(h) if h.is_ok()) {
         return None;
@@ -359,8 +378,8 @@ unsafe fn set_selection(ec: u32, ctx: &ITfContext, r: ITfRange) -> Result<()> {
             fInterimChar: BOOL(0),
         },
     };
-    let res = unsafe { ctx.SetSelection(ec, &[sel]) };
-    res
+
+    unsafe { ctx.SetSelection(ec, &[sel]) }
 }
 
 fn sub_range(ec: u32, range: &ITfRange, start: i32, end: i32) -> Result<ITfRange> {
@@ -415,7 +434,9 @@ fn apply_actions(
             }
         }
         // Every batch with candidates re-folds, since the typed keys change per key.
-        let shows = actions.iter().any(|a| matches!(a, Action::ShowCandidates { .. }));
+        let shows = actions
+            .iter()
+            .any(|a| matches!(a, Action::ShowCandidates { .. }));
         if touched || shows {
             cand::set_aux(st.aux.clone());
             cand::set_typed(Some(st.typed.clone()).filter(|t| !t.is_empty()));
@@ -503,7 +524,10 @@ fn update_preedit(
     };
     set_attr(ec, ctx, &range, atom_in);
     for a in attrs {
-        if matches!(a.style.as_str(), "highlight" | "reverse" | "underline_double") {
+        if matches!(
+            a.style.as_str(),
+            "highlight" | "reverse" | "underline_double"
+        ) {
             let s = utf16_offset(text, a.start);
             let e = utf16_offset(text, a.end);
             if let Ok(sr) = sub_range(ec, &range, s, e) {
@@ -562,7 +586,9 @@ impl TextService_Impl {
     fn activate(&self, ptim: Option<&ITfThreadMgr>, tid: u32) -> Result<()> {
         let tm = ptim.ok_or(E_INVALIDARG)?.clone();
         unsafe {
-            let ksm: ITfKeystrokeMgr = tm.cast().inspect_err(|e| dbg_log(&format!("cast ksm {e:?}")))?;
+            let ksm: ITfKeystrokeMgr = tm
+                .cast()
+                .inspect_err(|e| dbg_log(&format!("cast ksm {e:?}")))?;
             let ks: ITfKeyEventSink = self.to_interface();
             if let Err(e) = ksm.AdviseKeyEventSink(tid, &ks, true) {
                 // An unregistered text service (the e2e test) cannot advise.
@@ -572,9 +598,14 @@ impl TextService_Impl {
                 dbg_log(&format!("advise failed (ignored in debug): {e:?}"));
             }
             let cat: ITfCategoryMgr =
-                CoCreateInstance(&CLSID_TF_CategoryMgr, None, CLSCTX_INPROC_SERVER).inspect_err(|e| dbg_log(&format!("catmgr {e:?}")))?;
-            let a_in = cat.RegisterGUID(&GUID_ATTR_INPUT).inspect_err(|e| dbg_log(&format!("regguid1 {e:?}")))?;
-            let a_cv = cat.RegisterGUID(&GUID_ATTR_CONVERTED).inspect_err(|e| dbg_log(&format!("regguid2 {e:?}")))?;
+                CoCreateInstance(&CLSID_TF_CategoryMgr, None, CLSCTX_INPROC_SERVER)
+                    .inspect_err(|e| dbg_log(&format!("catmgr {e:?}")))?;
+            let a_in = cat
+                .RegisterGUID(&GUID_ATTR_INPUT)
+                .inspect_err(|e| dbg_log(&format!("regguid1 {e:?}")))?;
+            let a_cv = cat
+                .RegisterGUID(&GUID_ATTR_CONVERTED)
+                .inspect_err(|e| dbg_log(&format!("regguid2 {e:?}")))?;
             let mut st = self.state.borrow_mut();
             st.tid = tid;
             st.thread_mgr = Some(tm);
@@ -665,7 +696,11 @@ impl TextService_Impl {
                 }
                 let special = keymap::special_keysym(vk).is_some();
                 let plain_space = vk == keymap::VK_SPACE && !key.mods.shift;
-                if !has_preedit && ((key.mods.control) || (special && plain_space) || (special && vk != keymap::VK_SPACE)) {
+                if !has_preedit
+                    && ((key.mods.control)
+                        || (special && plain_space)
+                        || (special && vk != keymap::VK_SPACE))
+                {
                     return false;
                 }
                 match (has_preedit, keymap::msime_chord(key.keysym, key.mods)) {
@@ -679,10 +714,10 @@ impl TextService_Impl {
         // caret, so the model reads the sentence it is continuing.
         if !has_preedit && !mods.control && (0x21..=0x7e).contains(&keysym) {
             let tid = self.state.borrow().tid;
-            if let Some(left) = read_left_context(ctx, tid) {
-                if let Some(e) = self.state.borrow_mut().engine() {
-                    e.set_surrounding_text(&left, left.chars().count());
-                }
+            if let Some(left) = read_left_context(ctx, tid)
+                && let Some(e) = self.state.borrow_mut().engine()
+            {
+                e.set_surrounding_text(&left, left.chars().count());
             }
         }
 
@@ -696,7 +731,9 @@ impl TextService_Impl {
                 Some(e) => {
                     let r = e.process_key(keysym, mods);
                     if r.is_none() {
-                        diag(&format!("process_key got no reply (vk={vk:#x}, composing={has_preedit})"));
+                        diag(&format!(
+                            "process_key got no reply (vk={vk:#x}, composing={has_preedit})"
+                        ));
                     }
                     r
                 }
@@ -708,7 +745,8 @@ impl TextService_Impl {
         let consumed = result.consumed;
         // a commit or an emptied preedit ends the composition: the next word starts afresh
         let ends = result.actions.iter().any(|a| {
-            matches!(a, Action::Commit { .. }) || matches!(a, Action::UpdatePreedit { text, .. } if text.is_empty())
+            matches!(a, Action::Commit { .. })
+                || matches!(a, Action::UpdatePreedit { text, .. } if text.is_empty())
         });
         {
             let mut st = self.state.borrow_mut();
@@ -771,10 +809,10 @@ impl ITfTextInputProcessor_Impl for TextService_Impl {
         guard((), || self.flush());
         let tm = self.state.borrow().thread_mgr.clone();
         let tid = self.state.borrow().tid;
-        if let Some(tm) = tm {
-            if let Ok(ksm) = tm.cast::<ITfKeystrokeMgr>() {
-                let _ = unsafe { ksm.UnadviseKeyEventSink(tid) };
-            }
+        if let Some(tm) = tm
+            && let Ok(ksm) = tm.cast::<ITfKeystrokeMgr>()
+        {
+            let _ = unsafe { ksm.UnadviseKeyEventSink(tid) };
         }
         let mut st = self.state.borrow_mut();
         st.composition = None;
@@ -801,13 +839,17 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
         Ok(())
     }
     fn OnTestKeyDown(&self, _pic: Ref<ITfContext>, wparam: WPARAM, lparam: LPARAM) -> Result<BOOL> {
-        Ok(BOOL::from(guard(false, || self.would_eat(wparam.0 as u32, lparam))))
+        Ok(BOOL::from(guard(false, || {
+            self.would_eat(wparam.0 as u32, lparam)
+        })))
     }
     fn OnTestKeyUp(&self, _pic: Ref<ITfContext>, _w: WPARAM, _l: LPARAM) -> Result<BOOL> {
         Ok(BOOL(0))
     }
     fn OnKeyDown(&self, pic: Ref<ITfContext>, wparam: WPARAM, lparam: LPARAM) -> Result<BOOL> {
-        Ok(BOOL::from(guard(false, || self.handle_key(pic.as_ref(), wparam, lparam))))
+        Ok(BOOL::from(guard(false, || {
+            self.handle_key(pic.as_ref(), wparam, lparam)
+        })))
     }
     fn OnKeyUp(&self, _pic: Ref<ITfContext>, _w: WPARAM, _l: LPARAM) -> Result<BOOL> {
         Ok(BOOL(0))
@@ -818,7 +860,11 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
 }
 
 impl ITfCompositionSink_Impl for TextService_Impl {
-    fn OnCompositionTerminated(&self, _ecwrite: u32, _pcomposition: Ref<ITfComposition>) -> Result<()> {
+    fn OnCompositionTerminated(
+        &self,
+        _ecwrite: u32,
+        _pcomposition: Ref<ITfComposition>,
+    ) -> Result<()> {
         let mut st = self.state.borrow_mut();
         st.composition = None;
         st.has_preedit = false;

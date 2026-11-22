@@ -16,10 +16,18 @@ fn cmd(ty: u32, f: impl FnOnce(&mut W)) -> Vec<u8> {
 }
 
 fn main() {
-    let steps: usize = std::env::args().nth(1).and_then(|s| s.parse().ok()).unwrap_or(2000);
-    let mut seed: u64 = std::env::args().nth(2).and_then(|s| s.parse().ok()).unwrap_or(1);
+    let steps: usize = std::env::args()
+        .nth(1)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(2000);
+    let mut seed: u64 = std::env::args()
+        .nth(2)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(1);
     let mut rnd = move |n: u64| {
-        seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        seed = seed
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         (seed >> 33) % n
     };
     let mut b = Bridge::new(ImBackend::new());
@@ -72,8 +80,11 @@ fn main() {
         match b.handle(&command) {
             Some(r) => {
                 handled += 1;
-                let top = proto::parse(&r).unwrap_or_else(|| panic!("step {step}: reply does not parse"));
-                let out = proto::get(&top, 2).and_then(|v| v.as_bytes()).expect("output");
+                let top =
+                    proto::parse(&r).unwrap_or_else(|| panic!("step {step}: reply does not parse"));
+                let out = proto::get(&top, 2)
+                    .and_then(|v| v.as_bytes())
+                    .expect("output");
                 proto::parse(out).unwrap_or_else(|| panic!("step {step}: output does not parse"));
             }
             None => passed += 1,

@@ -93,7 +93,11 @@ fn write_annotation(w: &mut W, field: u32, desc: &Option<String>) {
 }
 
 fn write_candidates(out: &mut W, c: &CandView, converting: bool) {
-    let cat = if converting { CAT_CONVERSION } else { CAT_SUGGESTION };
+    let cat = if converting {
+        CAT_CONVERSION
+    } else {
+        CAT_SUGGESTION
+    };
     // all_candidate_words (CandidateList)
     out.message(14, |l| {
         if converting {
@@ -236,7 +240,10 @@ mod tests {
                 attrs: vec![(0, 2, true)],
             }),
             cands: Some(CandView {
-                items: vec![("今日".into(), None), ("きょう".into(), Some("ひらがな".into()))],
+                items: vec![
+                    ("今日".into(), None),
+                    ("きょう".into(), Some("ひらがな".into())),
+                ],
                 cursor: 0,
                 page: 0,
                 total_pages: 1,

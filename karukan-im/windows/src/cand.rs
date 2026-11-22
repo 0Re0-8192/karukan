@@ -13,11 +13,10 @@ use windows::Win32::Graphics::Gdi::{
     BeginPaint, BitBlt, CLEARTYPE_QUALITY, CLIP_DEFAULT_PRECIS, CreateCompatibleBitmap,
     CreateCompatibleDC, CreateFontW, CreateSolidBrush, DEFAULT_CHARSET, DEFAULT_PITCH,
     DT_END_ELLIPSIS, DT_NOPREFIX, DT_RIGHT, DT_SINGLELINE, DT_VCENTER, DeleteDC, DeleteObject,
-    DrawTextW, EndPaint, FF_DONTCARE, FW_NORMAL, FillRect, GetDC, GetMonitorInfoW,
-    GetStockObject, GetTextExtentPoint32W, HDC, HFONT, HGDIOBJ, InvalidateRect,
-    MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromPoint, NULL_PEN, OUT_DEFAULT_PRECIS,
-    PAINTSTRUCT, ReleaseDC, RoundRect, SRCCOPY, SelectObject, SetBkMode, SetTextColor,
-    TRANSPARENT,
+    DrawTextW, EndPaint, FF_DONTCARE, FW_NORMAL, FillRect, GetDC, GetMonitorInfoW, GetStockObject,
+    GetTextExtentPoint32W, HDC, HFONT, HGDIOBJ, InvalidateRect, MONITOR_DEFAULTTONEAREST,
+    MONITORINFO, MonitorFromPoint, NULL_PEN, OUT_DEFAULT_PRECIS, PAINTSTRUCT, ReleaseDC, RoundRect,
+    SRCCOPY, SelectObject, SetBkMode, SetTextColor, TRANSPARENT,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Registry::{HKEY_CURRENT_USER, RRF_RT_REG_DWORD, RegGetValueW};
@@ -235,7 +234,16 @@ fn draw(mem: HDC, cw: i32, ch: i32) {
         let small = HFONT(v.font_small.unwrap_or(0) as *mut _);
         unsafe {
             SetBkMode(mem, TRANSPARENT);
-            fill(mem, &RECT { left: 0, top: 0, right: cw, bottom: ch }, pal.bg);
+            fill(
+                mem,
+                &RECT {
+                    left: 0,
+                    top: 0,
+                    right: cw,
+                    bottom: ch,
+                },
+                pal.bg,
+            );
             let old_font = SelectObject(mem, HGDIOBJ(font.0));
             let top0 = px(4, v.scale);
             let rows_top = top0 + if v.flipped { 0 } else { v.typed_h };
@@ -247,7 +255,12 @@ fn draw(mem: HDC, cw: i32, ch: i32) {
                 } else {
                     top0
                 };
-                let mut r = RECT { left: v.pad, top: ty, right: cw - v.pad, bottom: ty + v.typed_h };
+                let mut r = RECT {
+                    left: v.pad,
+                    top: ty,
+                    right: cw - v.pad,
+                    bottom: ty + v.typed_h,
+                };
                 let flags = (DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX).0;
                 draw_text(mem, &v.typed_shown, &mut r, flags, pal.accent);
                 let ly = if v.flipped { ty } else { ty + v.typed_h - 1 };
@@ -349,7 +362,13 @@ fn draw(mem: HDC, cw: i32, ch: i32) {
                     let mut r = RECT {
                         left: v.pad,
                         top,
-                        right: cw - v.pad - if page_w > 0 { page_w + px(12, v.scale) } else { 0 },
+                        right: cw
+                            - v.pad
+                            - if page_w > 0 {
+                                page_w + px(12, v.scale)
+                            } else {
+                                0
+                            },
                         bottom: top + v.footer_h,
                     };
                     draw_text(mem, aux, &mut r, flags | DT_END_ELLIPSIS.0, pal.sub);
@@ -358,7 +377,6 @@ fn draw(mem: HDC, cw: i32, ch: i32) {
             SelectObject(mem, old_font);
         }
     });
-
 }
 
 fn ensure_window() -> Option<HWND> {
@@ -369,10 +387,13 @@ fn ensure_window() -> Option<HWND> {
         let hinst = GetModuleHandleW(None).ok()?;
         // One class per loaded copy of this code: after an update an app can hold two copies, and
         // a shared name would give the new window the old copy's window procedure.
-        let class_name: Vec<u16> = format!("KarukanCandidateWindow_{:x}", wnd_proc as *const () as usize)
-            .encode_utf16()
-            .chain(Some(0))
-            .collect();
+        let class_name: Vec<u16> = format!(
+            "KarukanCandidateWindow_{:x}",
+            wnd_proc as *const () as usize
+        )
+        .encode_utf16()
+        .chain(Some(0))
+        .collect();
         let class = PCWSTR(class_name.as_ptr());
         let wc = WNDCLASSEXW {
             cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
@@ -449,7 +470,9 @@ fn fit_tail(font: HFONT, text: &str, max_w: i32) -> String {
         let s: String = if skip == 0 {
             chars.iter().collect()
         } else {
-            std::iter::once('…').chain(chars[skip..].iter().copied()).collect()
+            std::iter::once('…')
+                .chain(chars[skip..].iter().copied())
+                .collect()
         };
         if skip + 1 >= chars.len() || measure(font, &[s.as_str()]).0 <= max_w {
             return s;
@@ -496,14 +519,26 @@ fn compute(
         .map(|t| fit_tail(font, t, px(520, scale) - pad * 2))
         .unwrap_or_default();
     let (typed_w, _) = measure(font, &[typed_shown.as_str()]);
-    let typed_h = if typed.is_some() { text_h + px(10, scale) } else { 0 };
+    let typed_h = if typed.is_some() {
+        text_h + px(10, scale)
+    } else {
+        0
+    };
     let row_h = text_h + px(10, scale);
-    let footer_h = if has_footer { small_h + px(10, scale) } else { 0 };
+    let footer_h = if has_footer {
+        small_h + px(10, scale)
+    } else {
+        0
+    };
     let comment_gap = if desc_w > 0 { px(28, scale) } else { 0 };
     let content_w = pad * 2 + num_w + px(10, scale) + text_w + comment_gap + desc_w;
     let footer_w = pad * 2
         + aux_w
-        + if page_w > 0 { page_w + px(12, scale) } else { 0 };
+        + if page_w > 0 {
+            page_w + px(12, scale)
+        } else {
+            0
+        };
     let width = content_w
         .max(footer_w)
         .max(pad * 2 + typed_w)
@@ -573,7 +608,13 @@ pub fn show(
         if let Some(a) = &anchor {
             flipped = false;
             // keep it on screen: flip above the composition near the bottom
-            let mon = MonitorFromPoint(POINT { x: a.x, y: a.bottom }, MONITOR_DEFAULTTONEAREST);
+            let mon = MonitorFromPoint(
+                POINT {
+                    x: a.x,
+                    y: a.bottom,
+                },
+                MONITOR_DEFAULTTONEAREST,
+            );
             let mut mi = MONITORINFO {
                 cbSize: std::mem::size_of::<MONITORINFO>() as u32,
                 ..Default::default()
@@ -626,7 +667,15 @@ fn place_log(anchor: &Option<Anchor>, x: i32, y: i32, w: i32, h: i32, dpi: u32) 
     let mut work = RECT::default();
     let (mut tx, mut ty) = (0, 0);
     if let Some(a) = anchor {
-        let mon = unsafe { MonitorFromPoint(POINT { x: a.x, y: a.bottom }, MONITOR_DEFAULTTONEAREST) };
+        let mon = unsafe {
+            MonitorFromPoint(
+                POINT {
+                    x: a.x,
+                    y: a.bottom,
+                },
+                MONITOR_DEFAULTTONEAREST,
+            )
+        };
         let mut mi = MONITORINFO {
             cbSize: std::mem::size_of::<MONITORINFO>() as u32,
             ..Default::default()
@@ -700,6 +749,7 @@ pub fn destroy() {
 
 /// Test hook: render the window offscreen. Returns (width, height, BGRA).
 #[doc(hidden)]
+#[allow(clippy::too_many_arguments)]
 pub fn render_preview(
     items: &[CandidateItem],
     cursor: usize,
@@ -711,7 +761,7 @@ pub fn render_preview(
     scale: f32,
 ) -> (i32, i32, Vec<u8>) {
     use windows::Win32::Graphics::Gdi::{
-        BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, GetDIBits,
+        BI_RGB, BITMAPINFO, BITMAPINFOHEADER, DIB_RGB_COLORS, GetDIBits,
     };
     set_aux(aux);
     set_typed(typed);
@@ -722,18 +772,28 @@ pub fn render_preview(
         let bmp = CreateCompatibleBitmap(hdc, w, h);
         let old = SelectObject(mem, HGDIOBJ(bmp.0));
         draw(mem, w, h);
-        let mut bi = BITMAPINFO::default();
-        bi.bmiHeader = BITMAPINFOHEADER {
-            biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
-            biWidth: w,
-            biHeight: -h,
-            biPlanes: 1,
-            biBitCount: 32,
-            biCompression: BI_RGB.0,
+        let mut bi = BITMAPINFO {
+            bmiHeader: BITMAPINFOHEADER {
+                biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+                biWidth: w,
+                biHeight: -h,
+                biPlanes: 1,
+                biBitCount: 32,
+                biCompression: BI_RGB.0,
+                ..Default::default()
+            },
             ..Default::default()
         };
         let mut buf = vec![0u8; (w * h * 4) as usize];
-        GetDIBits(mem, bmp, 0, h as u32, Some(buf.as_mut_ptr() as *mut _), &mut bi, DIB_RGB_COLORS);
+        GetDIBits(
+            mem,
+            bmp,
+            0,
+            h as u32,
+            Some(buf.as_mut_ptr() as *mut _),
+            &mut bi,
+            DIB_RGB_COLORS,
+        );
         SelectObject(mem, old);
         let _ = DeleteObject(HGDIOBJ(bmp.0));
         let _ = DeleteDC(mem);

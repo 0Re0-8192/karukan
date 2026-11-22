@@ -41,8 +41,9 @@ impl Default for ImBackend {
 impl Backend for ImBackend {
     fn call(&mut self, method: &str, params: Value) -> Option<Value> {
         self.next_id += 1;
-        let line = json!({"jsonrpc": "2.0", "id": self.next_id, "method": method, "params": params})
-            .to_string();
+        let line =
+            json!({"jsonrpc": "2.0", "id": self.next_id, "method": method, "params": params})
+                .to_string();
         let resp: Value = serde_json::from_str(&self.server.handle_line(&line)?).ok()?;
         resp.get("result").cloned()
     }
@@ -265,8 +266,10 @@ impl<B: Backend> Bridge<B> {
         };
         let cursor = tail.chars().count();
         let text = format!("{tail}{after}");
-        self.be
-            .call("set_surrounding_text", json!({"text": text, "cursor_pos": cursor}));
+        self.be.call(
+            "set_surrounding_text",
+            json!({"text": text, "cursor_pos": cursor}),
+        );
     }
 
     /// Fold engine actions into `self.frame`; returns `(consumed, committed text)`.
@@ -371,7 +374,9 @@ impl<B: Backend> Bridge<B> {
                     self.extras.clear();
                     return Some(self.reply(raw, inp, true, Some(&text)));
                 }
-                let res = self.be.call("select_candidate", json!({"page_index": idx}))?;
+                let res = self
+                    .be
+                    .call("select_candidate", json!({"page_index": idx}))?;
                 let (consumed, text) = self.apply(&res);
                 self.refresh_active();
                 if !text.is_empty() {
@@ -382,7 +387,11 @@ impl<B: Backend> Bridge<B> {
             SC_MOVE_CURSOR => {
                 let target = cmd.cursor_position.unwrap_or(0) as i64;
                 let at = self.frame.preedit.as_ref().map_or(0, |p| p.caret) as i64;
-                let (key, n) = if target < at { (0xff51u32, at - target) } else { (0xff53, target - at) };
+                let (key, n) = if target < at {
+                    (0xff51u32, at - target)
+                } else {
+                    (0xff53, target - at)
+                };
                 for _ in 0..n.min(64) {
                     if let Some(res) = self.be.call("process_key", json!({"keysym": key})) {
                         self.apply(&res);
@@ -451,7 +460,10 @@ impl<B: Backend> Bridge<B> {
                         .flat_map(|c| c.items.iter().map(|i| i.0.as_str()))
                         .collect();
                     for (text, desc) in found {
-                        if text.is_empty() || own.contains(&text.as_str()) || extras.iter().any(|e| e.0 == text) {
+                        if text.is_empty()
+                            || own.contains(&text.as_str())
+                            || extras.iter().any(|e| e.0 == text)
+                        {
                             continue;
                         }
                         extras.push((text, desc));
@@ -515,7 +527,10 @@ impl<B: Backend> Bridge<B> {
             .and_then(proto::parse);
         if let Some(o) = &out {
             self.mozc_active = proto::get(o, 5).is_some();
-            if let Some(st) = proto::get(o, 13).and_then(|v| v.as_bytes()).and_then(proto::parse) {
+            if let Some(st) = proto::get(o, 13)
+                .and_then(|v| v.as_bytes())
+                .and_then(proto::parse)
+            {
                 if let Some(a) = proto::get(&st, 1).and_then(|v| v.as_u64()) {
                     self.ime_on = a != 0;
                 }
@@ -554,18 +569,28 @@ fn mozc_candidates(reply: &[u8]) -> (Vec<(String, Option<String>)>, bool) {
     let Some(top) = proto::parse(reply) else {
         return (Vec::new(), false);
     };
-    let Some(out) = proto::get(&top, 2).and_then(|v| v.as_bytes()).and_then(proto::parse) else {
+    let Some(out) = proto::get(&top, 2)
+        .and_then(|v| v.as_bytes())
+        .and_then(proto::parse)
+    else {
         return (Vec::new(), false);
     };
     let composing = proto::get(&out, 5).is_some();
     let mut found = Vec::new();
-    if let Some(list) = proto::get(&out, 14).and_then(|v| v.as_bytes()).and_then(proto::parse) {
+    if let Some(list) = proto::get(&out, 14)
+        .and_then(|v| v.as_bytes())
+        .and_then(proto::parse)
+    {
         for (f, v) in &list {
             if *f != 2 {
                 continue;
             }
-            let Some(c) = v.as_bytes().and_then(proto::parse) else { continue };
-            let Some(text) = proto::get(&c, 4).and_then(|v| v.as_str()) else { continue };
+            let Some(c) = v.as_bytes().and_then(proto::parse) else {
+                continue;
+            };
+            let Some(text) = proto::get(&c, 4).and_then(|v| v.as_str()) else {
+                continue;
+            };
             let desc = proto::get(&c, 5)
                 .and_then(|v| v.as_bytes())
                 .and_then(proto::parse)

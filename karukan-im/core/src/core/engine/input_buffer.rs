@@ -104,9 +104,10 @@ impl InputBuffer {
         if !digit.is_ascii_digit() || self.cursor != self.elements.len() || self.cursor < 2 {
             return false;
         }
-        let (Element::Converted(mark), Element::Converted(num)) =
-            (self.elements[self.cursor - 1], self.elements[self.cursor - 2])
-        else {
+        let (Element::Converted(mark), Element::Converted(num)) = (
+            self.elements[self.cursor - 1],
+            self.elements[self.cursor - 2],
+        ) else {
             return false;
         };
         let half = num.is_ascii_digit();

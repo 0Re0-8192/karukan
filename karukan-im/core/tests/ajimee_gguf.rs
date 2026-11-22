@@ -17,12 +17,15 @@ fn ajimee() {
     ) else {
         return;
     };
-    let keep: Option<usize> = std::env::var("KARUKAN_AJIMEE_CTX").ok().and_then(|s| s.parse().ok());
+    let keep: Option<usize> = std::env::var("KARUKAN_AJIMEE_CTX")
+        .ok()
+        .and_then(|s| s.parse().ok());
     let items: Vec<serde_json::Value> =
         serde_json::from_str(&std::fs::read_to_string(items).unwrap()).unwrap();
     for path in list.split(';').filter(|s| !s.is_empty()) {
         let gguf = std::path::Path::new(path);
-        let mut model = LlamaCppModel::from_file(gguf, gguf.with_file_name("tokenizer.json")).unwrap();
+        let mut model =
+            LlamaCppModel::from_file(gguf, gguf.with_file_name("tokenizer.json")).unwrap();
         model.set_n_threads(4);
         let eos = model.eos_token_id().0;
         let (mut ok, mut n, mut ms, mut shown) = (0, 0, 0.0, 0);
@@ -53,7 +56,10 @@ fn ajimee() {
             ok += hit as usize;
             if !hit && shown < 12 {
                 shown += 1;
-                report(&format!("  MISS {input} | got {text} | want {}", it["expected_output"][0]));
+                report(&format!(
+                    "  MISS {input} | got {text} | want {}",
+                    it["expected_output"][0]
+                ));
             }
         }
         report(&format!(
@@ -70,7 +76,11 @@ fn report(line: &str) {
     eprintln!("{line}");
     if let Ok(p) = std::env::var("KARUKAN_AJIMEE_OUT") {
         use std::io::Write;
-        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(p) {
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(p)
+        {
             let _ = writeln!(f, "{line}");
         }
     }

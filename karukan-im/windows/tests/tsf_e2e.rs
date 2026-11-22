@@ -35,7 +35,7 @@ impl ITfEditSession_Impl for ReadAll_Impl {
             r.Collapse(ec, windows::Win32::UI::TextServices::TF_ANCHOR_START)?;
             let mut halted = 0i32;
             let mut total = String::new();
-            loop {
+            {
                 let mut buf = [0u16; 64];
                 let mut got = 0u32;
                 // grow the range one chunk at a time
@@ -44,7 +44,6 @@ impl ITfEditSession_Impl for ReadAll_Impl {
                 chunk.ShiftEnd(ec, 4096, &mut halted, std::ptr::null())?;
                 chunk.GetText(ec, 0, &mut buf, &mut got)?;
                 total.push_str(&String::from_utf16_lossy(&buf[..got as usize]));
-                break;
             }
             let _ = TF_ANCHOR_END;
             *self.out.borrow_mut() = total;
@@ -112,8 +111,8 @@ impl Harness {
                 .RequestEditSession(self.tid, &session, TF_ES_SYNC | TF_ES_READWRITE);
             assert!(hr.is_ok(), "read session failed: {hr:?}");
         }
-        let s = out.borrow().clone();
-        s
+
+        out.borrow().clone()
     }
 }
 
@@ -147,7 +146,10 @@ fn per_key_latency() {
     eprintln!("first key: {} ms", t.elapsed().as_millis());
     std::thread::sleep(std::time::Duration::from_secs(3));
     let mut ms = vec![];
-    for vk in "ATASHINONAMAEHANAKADADESUKYOUHATENKIGAIIDESUNEASITAMOHARERUTOIIDESUGAKOREWANAGAIBUNNDESU".bytes() {
+    for vk in
+        "ATASHINONAMAEHANAKADADESUKYOUHATENKIGAIIDESUNEASITAMOHARERUTOIIDESUGAKOREWANAGAIBUNNDESU"
+            .bytes()
+    {
         let t = std::time::Instant::now();
         h.key(vk as u32);
         ms.push(t.elapsed().as_millis());
@@ -187,9 +189,15 @@ impl ITfEditSession_Impl for Put_Impl {
 fn the_text_left_of_the_caret_is_readable() {
     let Some(h) = setup() else { return };
     let text = "今日は天気が";
-    let s: ITfEditSession = Put { ctx: h.ctx.clone(), text: text.into() }.into();
+    let s: ITfEditSession = Put {
+        ctx: h.ctx.clone(),
+        text: text.into(),
+    }
+    .into();
     unsafe {
-        let hr = h.ctx.RequestEditSession(h.tid, &s, TF_ES_SYNC | TF_ES_READWRITE);
+        let hr = h
+            .ctx
+            .RequestEditSession(h.tid, &s, TF_ES_SYNC | TF_ES_READWRITE);
         assert!(hr.is_ok(), "{hr:?}");
     }
     let left = karukan_tsf::__read_left_context(&h.ctx, h.tid);

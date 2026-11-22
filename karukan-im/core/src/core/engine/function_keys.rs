@@ -25,7 +25,10 @@ pub(super) fn is_script_key(sym: Keysym) -> bool {
 fn capitalize(s: &str) -> String {
     let mut chars = s.chars();
     match chars.next() {
-        Some(first) => first.to_uppercase().chain(chars.flat_map(char::to_lowercase)).collect(),
+        Some(first) => first
+            .to_uppercase()
+            .chain(chars.flat_map(char::to_lowercase))
+            .collect(),
         None => String::new(),
     }
 }

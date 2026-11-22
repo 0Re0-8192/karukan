@@ -11,9 +11,11 @@ fn type_str(engine: &mut InputMethodEngine, s: &str) {
 fn candidates_after_space(engine: &mut InputMethodEngine) -> Vec<String> {
     engine.process_key(&press(' '));
     match engine.state() {
-        InputState::Conversion { candidates, .. } => {
-            candidates.candidates().iter().map(|c| c.text.clone()).collect()
-        }
+        InputState::Conversion { candidates, .. } => candidates
+            .candidates()
+            .iter()
+            .map(|c| c.text.clone())
+            .collect(),
         other => panic!("not converting: {other:?}"),
     }
 }
@@ -35,7 +37,8 @@ fn plain_japanese_gets_no_mixed_candidate() {
     let list = candidates_after_space(&mut engine);
     // the typed keys themselves are the one ASCII candidate
     assert!(
-        list.iter().all(|t| t == "kyouhatenkiga" || t.chars().all(|c| !c.is_ascii_alphabetic())),
+        list.iter()
+            .all(|t| t == "kyouhatenkiga" || t.chars().all(|c| !c.is_ascii_alphabetic())),
         "{list:?}"
     );
 }
@@ -102,7 +105,8 @@ fn valid_romaji_that_spells_english_words_is_not_hijacked() {
         type_str(&mut engine, typed);
         let list = candidates_after_space(&mut engine);
         assert!(
-            list.iter().all(|t| t == typed || t.chars().all(|c| !c.is_ascii_alphabetic())),
+            list.iter()
+                .all(|t| t == typed || t.chars().all(|c| !c.is_ascii_alphabetic())),
             "{typed}: {list:?}"
         );
     }
@@ -128,7 +132,12 @@ fn a_single_capital_word_stays_english() {
 #[test]
 fn a_host_name_is_offered_whole_with_its_dots() {
     // `.` would settle into 。 and cut the word in two
-    for host in ["example.jp", "example.com", "www.google.com", "windowsdeha.example.jp"] {
+    for host in [
+        "example.jp",
+        "example.com",
+        "www.google.com",
+        "windowsdeha.example.jp",
+    ] {
         let mut engine = InputMethodEngine::new();
         engine.converters.kanji = None;
         type_str(&mut engine, host);
@@ -147,7 +156,9 @@ fn sentence_dots_stay_kana() {
         type_str(&mut engine, typed);
         let list = candidates_after_space(&mut engine);
         assert!(
-            !list.iter().any(|t| t.chars().all(|c| c.is_ascii()) && t.contains('.') && t != typed),
+            !list
+                .iter()
+                .any(|t| t.is_ascii() && t.contains('.') && t != typed),
             "{typed}: {list:?}"
         );
     }
@@ -183,6 +194,11 @@ fn backspace_keeps_the_typed_keys_row_down_a_word() {
     type_str(&mut engine, "kaigi");
     for want in ["kai", "ka", ""] {
         engine.process_key(&press_key(Keysym::BACKSPACE));
-        assert_eq!(engine.typed_keys(), want, "{:?}", engine.preedit().map(|p| p.text().to_string()));
+        assert_eq!(
+            engine.typed_keys(),
+            want,
+            "{:?}",
+            engine.preedit().map(|p| p.text().to_string())
+        );
     }
 }

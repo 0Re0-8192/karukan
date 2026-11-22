@@ -35,7 +35,11 @@ impl Backend for Fake {
 }
 
 fn bridge() -> Bridge<Fake> {
-    Bridge::new(Fake { queue: VecDeque::new(), state: "empty", calls: vec![] })
+    Bridge::new(Fake {
+        queue: VecDeque::new(),
+        state: "empty",
+        calls: vec![],
+    })
 }
 
 fn key_cmd(ty: u32, f: impl FnOnce(&mut W)) -> Vec<u8> {
@@ -142,14 +146,27 @@ fn typed(b: &mut Bridge<Fake>, own: &[&str], cands: &[(&str, Option<&str>)]) -> 
     b.backend().queue.push_back(composing("まる", own));
     let key = key_cmd(3, |k| k.uint(1, 'u' as u64));
     b.handle(&key).unwrap();
-    assert_eq!(b.shadow_command(&key).as_deref(), Some(&key[..]), "the key is mirrored");
+    assert_eq!(
+        b.shadow_command(&key).as_deref(),
+        Some(&key[..]),
+        "the key is mirrored"
+    );
     b.shadow_reply(&mozc_reply(cands, true)).expect("amended")
 }
 
 #[test]
 fn appends_mozc_candidates_after_karukan_ones() {
     let mut b = bridge();
-    let merged = typed(&mut b, &["丸", "まる"], &[("丸", None), ("○", Some("記号")), ("●", None), ("まる", None)]);
+    let merged = typed(
+        &mut b,
+        &["丸", "まる"],
+        &[
+            ("丸", None),
+            ("○", Some("記号")),
+            ("●", None),
+            ("まる", None),
+        ],
+    );
     assert_eq!(candidate_values(&merged), ["丸", "まる", "○", "●"]);
     // The description of Mozc's candidate is kept.
     assert!(merged.windows("記号".len()).any(|w| w == "記号".as_bytes()));
@@ -172,8 +189,17 @@ fn selecting_a_mozc_candidate_commits_it_and_reverts_mozc() {
     let o = output(&out);
     let r = proto::parse(&o.iter().find(|(f, _)| *f == 4).expect("result").1).unwrap();
     assert_eq!(proto::get(&r, 2).unwrap().as_str().unwrap(), "△");
-    assert!(o.iter().all(|(f, _)| *f != 5 && *f != 14), "nothing is left to show");
-    assert!(!b.backend().calls.iter().any(|c| c.starts_with("select_candidate")), "karukan is not asked");
+    assert!(
+        o.iter().all(|(f, _)| *f != 5 && *f != 14),
+        "nothing is left to show"
+    );
+    assert!(
+        !b.backend()
+            .calls
+            .iter()
+            .any(|c| c.starts_with("select_candidate")),
+        "karukan is not asked"
+    );
     // The composition is over: Mozc is told to revert, once.
     let revert = b.shadow_command(&select).expect("revert");
     assert!(is_revert(&revert));
@@ -185,10 +211,17 @@ fn selecting_a_mozc_candidate_commits_it_and_reverts_mozc() {
 fn selecting_a_karukan_candidate_still_goes_to_karukan() {
     let mut b = bridge();
     typed(&mut b, &["三角", "さんかく"], &[("△", None)]);
-    b.backend().queue.push_back(json!({"consumed": true, "_state": "empty", "actions": [
+    b.backend()
+        .queue
+        .push_back(json!({"consumed": true, "_state": "empty", "actions": [
         {"type": "commit", "text": "さんかく"}]}));
     let out = b.handle(&cmd_cmd(7, Some(1))).unwrap();
-    assert!(b.backend().calls.iter().any(|c| c == r#"select_candidate {"page_index":1}"#));
+    assert!(
+        b.backend()
+            .calls
+            .iter()
+            .any(|c| c == r#"select_candidate {"page_index":1}"#)
+    );
     assert!(output(&out).iter().any(|(f, _)| *f == 4));
 }
 
@@ -196,7 +229,9 @@ fn selecting_a_karukan_candidate_still_goes_to_karukan() {
 fn commit_by_enter_reverts_mozc() {
     let mut b = bridge();
     typed(&mut b, &["木"], &[("気", None)]);
-    b.backend().queue.push_back(json!({"consumed": true, "_state": "empty", "actions": [
+    b.backend()
+        .queue
+        .push_back(json!({"consumed": true, "_state": "empty", "actions": [
         {"type": "hide_candidates"}, {"type": "commit", "text": "木"}]}));
     let enter = key_cmd(3, |k| k.uint(3, 5));
     b.handle(&enter).unwrap();
@@ -212,7 +247,9 @@ fn mozc_without_a_composition_adds_nothing_and_needs_no_revert() {
     b.shadow_command(&key).unwrap();
     let merged = b.shadow_reply(&mozc_reply(&[("気", None)], false)).unwrap();
     assert_eq!(candidate_values(&merged), ["木"]);
-    b.backend().queue.push_back(json!({"consumed": true, "_state": "empty", "actions": [
+    b.backend()
+        .queue
+        .push_back(json!({"consumed": true, "_state": "empty", "actions": [
         {"type": "commit", "text": "木"}]}));
     let enter = key_cmd(3, |k| k.uint(3, 5));
     b.handle(&enter).unwrap();
@@ -224,7 +261,9 @@ fn a_command_for_mozc_clears_the_background_composition_first() {
     let mut b = bridge();
     typed(&mut b, &["木"], &[("気", None)]);
     // A mode switch goes to Mozc: revert first, so that Mozc does not commit its own composition too.
-    b.backend().queue.push_back(json!({"consumed": true, "_state": "empty", "actions": [
+    b.backend()
+        .queue
+        .push_back(json!({"consumed": true, "_state": "empty", "actions": [
         {"type": "commit", "text": "き"}]}));
     let switch = cmd_cmd(5, None);
     assert!(b.handle(&switch).is_none());
@@ -241,8 +280,14 @@ fn key_release_and_test_keys_leave_it_alone() {
         k.uint(4, 16);
     });
     assert!(b.shadow_revert(&release).is_none());
-    assert!(b.shadow_revert(&key_cmd(4, |k| k.uint(1, 'k' as u64))).is_none());
-    assert!(b.shadow_command(&release).is_none(), "a release is not mirrored");
+    assert!(
+        b.shadow_revert(&key_cmd(4, |k| k.uint(1, 'k' as u64)))
+            .is_none()
+    );
+    assert!(
+        b.shadow_command(&release).is_none(),
+        "a release is not mirrored"
+    );
 }
 
 #[test]

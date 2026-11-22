@@ -60,11 +60,10 @@ pub extern "system" fn Java_app_re0_extension_gboard_KarukanNative_handle(
     command: JByteArray,
 ) -> jbyteArray {
     let cmd = bytes(&env, &command);
-    let out = std::panic::catch_unwind(|| {
-        BRIDGE.lock().ok()?.as_mut().and_then(|b| b.handle(&cmd))
-    })
-    .ok()
-    .flatten();
+    let out =
+        std::panic::catch_unwind(|| BRIDGE.lock().ok()?.as_mut().and_then(|b| b.handle(&cmd)))
+            .ok()
+            .flatten();
     ret(&env, out)
 }
 
@@ -77,7 +76,11 @@ pub extern "system" fn Java_app_re0_extension_gboard_KarukanNative_observe(
 ) -> jbyteArray {
     let (cmd, rep) = (bytes(&env, &command), bytes(&env, &reply));
     let out = std::panic::catch_unwind(|| {
-        BRIDGE.lock().ok()?.as_mut().and_then(|b| b.observe(&cmd, &rep))
+        BRIDGE
+            .lock()
+            .ok()?
+            .as_mut()
+            .and_then(|b| b.observe(&cmd, &rep))
     })
     .ok()
     .flatten();
@@ -94,7 +97,11 @@ pub extern "system" fn Java_app_re0_extension_gboard_KarukanNative_shadowCommand
 ) -> jbyteArray {
     let cmd = bytes(&env, &command);
     let out = std::panic::catch_unwind(|| {
-        BRIDGE.lock().ok()?.as_mut().and_then(|b| b.shadow_command(&cmd))
+        BRIDGE
+            .lock()
+            .ok()?
+            .as_mut()
+            .and_then(|b| b.shadow_command(&cmd))
     })
     .ok()
     .flatten();
@@ -110,7 +117,11 @@ pub extern "system" fn Java_app_re0_extension_gboard_KarukanNative_shadowReply(
 ) -> jbyteArray {
     let rep = bytes(&env, &mozc_reply);
     let out = std::panic::catch_unwind(|| {
-        BRIDGE.lock().ok()?.as_mut().and_then(|b| b.shadow_reply(&rep))
+        BRIDGE
+            .lock()
+            .ok()?
+            .as_mut()
+            .and_then(|b| b.shadow_reply(&rep))
     })
     .ok()
     .flatten();
@@ -126,7 +137,11 @@ pub extern "system" fn Java_app_re0_extension_gboard_KarukanNative_shadowRevert(
 ) -> jbyteArray {
     let cmd = bytes(&env, &command);
     let out = std::panic::catch_unwind(|| {
-        BRIDGE.lock().ok()?.as_mut().and_then(|b| b.shadow_revert(&cmd))
+        BRIDGE
+            .lock()
+            .ok()?
+            .as_mut()
+            .and_then(|b| b.shadow_revert(&cmd))
     })
     .ok()
     .flatten();

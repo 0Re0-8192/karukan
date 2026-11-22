@@ -150,6 +150,7 @@ pub fn __read_left_context(
 /// Test hook: render the candidate window offscreen as BGRA.
 #[cfg(windows)]
 #[doc(hidden)]
+#[allow(clippy::too_many_arguments)]
 pub fn __render_candidate_preview(
     items: &[engine::CandidateItem],
     cursor: usize,

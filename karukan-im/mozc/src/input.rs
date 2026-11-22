@@ -125,7 +125,9 @@ fn decode_command(b: &[u8]) -> Option<SessionCommand> {
     let f = proto::parse(b)?;
     Some(SessionCommand {
         ty: proto::get(&f, 1).and_then(|v| v.as_u64()).unwrap_or(0) as u32,
-        id: proto::get(&f, 2).and_then(|v| v.as_u64()).map(|v| v as i64 as i32),
+        id: proto::get(&f, 2)
+            .and_then(|v| v.as_u64())
+            .map(|v| v as i64 as i32),
         composition_mode: proto::get(&f, 3).and_then(|v| v.as_u64()).map(|v| v as u32),
         text: proto::get(&f, 4).and_then(|v| v.as_str()),
         cursor_position: proto::get(&f, 5).and_then(|v| v.as_u64()).map(|v| v as u32),
@@ -145,13 +147,23 @@ pub fn decode_command_input(bytes: &[u8]) -> Option<(&[u8], Input)> {
         id: proto::get(&f, 2).and_then(|v| v.as_u64()),
         ..Default::default()
     };
-    input.key = proto::get(&f, 3).and_then(|v| v.as_bytes()).and_then(decode_key);
-    input.command = proto::get(&f, 4).and_then(|v| v.as_bytes()).and_then(decode_command);
-    if let Some(ctx) = proto::get(&f, 6).and_then(|v| v.as_bytes()).and_then(proto::parse) {
+    input.key = proto::get(&f, 3)
+        .and_then(|v| v.as_bytes())
+        .and_then(decode_key);
+    input.command = proto::get(&f, 4)
+        .and_then(|v| v.as_bytes())
+        .and_then(decode_command);
+    if let Some(ctx) = proto::get(&f, 6)
+        .and_then(|v| v.as_bytes())
+        .and_then(proto::parse)
+    {
         input.preceding = proto::get(&ctx, 1).and_then(|v| v.as_str());
         input.following = proto::get(&ctx, 2).and_then(|v| v.as_str());
     }
-    if let Some(req) = proto::get(&f, 9).and_then(|v| v.as_bytes()).and_then(proto::parse) {
+    if let Some(req) = proto::get(&f, 9)
+        .and_then(|v| v.as_bytes())
+        .and_then(proto::parse)
+    {
         input.request_table =
             Some(proto::get(&req, 4).and_then(|v| v.as_u64()).unwrap_or(0) as u32);
     }
@@ -203,7 +215,10 @@ pub fn is_romaji_start(k: &Key) -> bool {
     if k.ctrl() || k.alt() {
         return false;
     }
-    if k.key_string.as_deref().is_some_and(|s| !s.is_empty() && !s.is_ascii()) {
+    if k.key_string
+        .as_deref()
+        .is_some_and(|s| !s.is_empty() && !s.is_ascii())
+    {
         return false; // kana from a toggle/flick keyboard
     }
     matches!(k.key_code, Some(c) if (0x21..0x7f).contains(&c))

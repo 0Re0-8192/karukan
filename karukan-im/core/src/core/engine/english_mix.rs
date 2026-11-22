@@ -56,7 +56,9 @@ pub(super) enum Piece {
 }
 
 /// Top-level domains that mark `a.b` as a host name (`example.com`).
-const LONG_TLDS: [&str; 9] = ["com", "net", "org", "dev", "app", "info", "biz", "edu", "gov"];
+const LONG_TLDS: [&str; 9] = [
+    "com", "net", "org", "dev", "app", "info", "biz", "edu", "gov",
+];
 /// Two-letter ones: also ordinary kana typing (`asu.ne` is あす。ね), so a host
 /// name needs a label before them that cannot be kana (`example.jp`).
 const SHORT_TLDS: [&str; 12] = [
@@ -152,8 +154,7 @@ pub(super) fn split(
         for end in (i + MIN_WORD)..=n {
             let run = &lower[i..end];
             let learned = learned(run);
-            if (words.contains(run) || learned)
-                && (!kana(run) || names().contains(run) || learned)
+            if (words.contains(run) || learned) && (!kana(run) || names().contains(run) || learned)
             {
                 consider(end, true, &mut here);
             }
@@ -396,11 +397,31 @@ impl InputMethodEngine {
                     })
                     .chain(std::iter::once(rest))
                     .collect();
-                shape.ends_with(tail.as_str()).then(|| (pieces, rest.to_string()))
+                shape
+                    .ends_with(tail.as_str())
+                    .then(|| (pieces, rest.to_string()))
             })?;
         let text = format!("{}{}", self.assemble_pieces(&pieces), rest);
         text.strip_suffix(tail.as_str()).map(str::to_string)
     }
+}
+
+/// What the keys read as, with a `.` between digits left a point (`1.5`) —
+/// the romaji rules alone read it as `。`, which the composition no longer
+/// holds once the digit after it has been typed.
+pub(super) fn with_decimal_points(reading: String) -> String {
+    let chars: Vec<char> = reading.chars().collect();
+    chars
+        .iter()
+        .enumerate()
+        .map(|(i, &c)| {
+            let between = i > 0
+                && i + 1 < chars.len()
+                && chars[i - 1].is_ascii_digit()
+                && chars[i + 1].is_ascii_digit();
+            if c == '。' && between { '.' } else { c }
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -455,23 +476,4 @@ mod tests {
     fn keeps_typed_case() {
         assert_eq!(show("WindowsDeha").as_deref(), Some("[Windows]<Deha>"));
     }
-}
-
-
-/// What the keys read as, with a `.` between digits left a point (`1.5`) —
-/// the romaji rules alone read it as `。`, which the composition no longer
-/// holds once the digit after it has been typed.
-pub(super) fn with_decimal_points(reading: String) -> String {
-    let chars: Vec<char> = reading.chars().collect();
-    chars
-        .iter()
-        .enumerate()
-        .map(|(i, &c)| {
-            let between = i > 0
-                && i + 1 < chars.len()
-                && chars[i - 1].is_ascii_digit()
-                && chars[i + 1].is_ascii_digit();
-            if c == '。' && between { '.' } else { c }
-        })
-        .collect()
 }

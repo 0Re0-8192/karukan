@@ -60,7 +60,10 @@ impl InputMethodEngine {
             || !self.chunk_breaks.is_empty()
             || self.raw_keys.is_empty()
             || self.input_buf.cursor() != self.input_buf.char_count()
-            || !self.raw_keys.chars().all(|c| c.is_ascii_lowercase() || c == '-')
+            || !self
+                .raw_keys
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c == '-')
         {
             return;
         }
@@ -85,7 +88,9 @@ impl InputMethodEngine {
             for len in 1..=3usize {
                 for n in 0..KEYS.len().pow(len as u32) {
                     let tail: String = (0..len)
-                        .map(|d| KEYS[(n / KEYS.len().pow((len - 1 - d) as u32)) % KEYS.len()] as char)
+                        .map(|d| {
+                            KEYS[(n / KEYS.len().pow((len - 1 - d) as u32)) % KEYS.len()] as char
+                        })
                         .collect();
                     let cand = format!("{head}{tail}");
                     if spell(&cand).eq_ignore_ascii_case(&target) {

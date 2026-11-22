@@ -24,10 +24,16 @@ fn show(reply: &[u8]) {
     let top = proto::parse(reply).unwrap();
     let o = proto::parse(proto::get(&top, 2).unwrap().as_bytes().unwrap()).unwrap();
     let mut line = String::new();
-    if let Some(r) = proto::get(&o, 4).and_then(|v| v.as_bytes()).and_then(proto::parse) {
+    if let Some(r) = proto::get(&o, 4)
+        .and_then(|v| v.as_bytes())
+        .and_then(proto::parse)
+    {
         line += &format!("[commit {}] ", proto::get(&r, 2).unwrap().as_str().unwrap());
     }
-    if let Some(p) = proto::get(&o, 5).and_then(|v| v.as_bytes()).and_then(proto::parse) {
+    if let Some(p) = proto::get(&o, 5)
+        .and_then(|v| v.as_bytes())
+        .and_then(proto::parse)
+    {
         let segs: Vec<String> = p
             .iter()
             .filter_map(|(f, v)| match (f, v) {
@@ -35,7 +41,11 @@ fn show(reply: &[u8]) {
                     let g = proto::parse(g).unwrap();
                     Some(format!(
                         "{}{}",
-                        if proto::get(&g, 3) == Some(Val::Varint(2)) { "*" } else { "_" },
+                        if proto::get(&g, 3) == Some(Val::Varint(2)) {
+                            "*"
+                        } else {
+                            "_"
+                        },
                         proto::get(&g, 4).unwrap().as_str().unwrap()
                     ))
                 }
@@ -44,7 +54,10 @@ fn show(reply: &[u8]) {
             .collect();
         line += &format!("preedit {} ", segs.join("|"));
     }
-    if let Some(l) = proto::get(&o, 14).and_then(|v| v.as_bytes()).and_then(proto::parse) {
+    if let Some(l) = proto::get(&o, 14)
+        .and_then(|v| v.as_bytes())
+        .and_then(proto::parse)
+    {
         let c: Vec<String> = l
             .iter()
             .filter(|(f, _)| *f == 2)
