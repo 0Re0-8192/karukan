@@ -10,7 +10,7 @@
 
 ## 入れ方
 
-1. [Releases](https://github.com/0Re0-8192/karukan-windows/releases/latest) から `karukan-setup-<版>.exe` を取得する。
+1. [Releases](https://github.com/0Re0-8192/karukan-windows/releases) から `karukan-setup-<版>.exe` を取得する。
 2. 実行して「入れる」を選ぶ(管理者の確認が 1 回出ます)。
 3. Win+Space で karukan を選ぶ。
 
