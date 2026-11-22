@@ -22,6 +22,8 @@
 
 - MS-IME 準拠のキー(半角/全角・変換・無変換・F6〜F10)。一覧は [karukan-im/windows/README.md](karukan-im/windows/README.md)
 - 英単語をローマ字のまま打っても英字の候補が出る(`windowsdeha` → `windowsでは`)
+- 変換中に続けて打つと、選んだ候補を残したまま後ろを打てる(「貴社」を選んで「のきしゃ」→「貴社の記者」。[riq0h/karukan](https://github.com/riq0h/karukan) から移植)
+- 打ったままの英字(`repo`)は Space の 1 ページ目に出て、一度選ぶと英単語として覚える
 - 改行をまたいだ文脈(前の行を文として左文脈に入れる、最大 25 文字)
 - 既定モデル [jinen-v2-small-karukan](https://huggingface.co/OReOOreoaaaa/jinen-v2-small-karukan.gguf): jinen-v2-small を、短い読みを左文脈つきで変換する使い方に合わせて追加学習したもの
 - インストーラー(上書き更新、アプリの再起動なしで反映)
