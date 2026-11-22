@@ -245,3 +245,26 @@ fn picking_the_typed_keys_learns_the_word() {
     );
     assert!(engine.corrections.is_known("repo"));
 }
+
+#[test]
+fn a_learned_word_leads_and_shows_as_typed() {
+    // Once `repo` was picked as typed, it heads the Space list and the live
+    // preedit shows it as typed, so Enter alone commits it.
+    let mut engine = InputMethodEngine::new();
+    seed_model_cache(&mut engine, "レポ", "", &["レポ"]);
+    engine.live.enabled = true;
+    engine.corrections.learn_english("repo");
+    type_str(&mut engine, "repo");
+    assert_eq!(engine.live_text(), "repo");
+    let list = candidates_after_space(&mut engine);
+    assert_eq!(list.first().map(String::as_str), Some("repo"), "{list:?}");
+}
+
+#[test]
+fn an_unlearned_kana_word_stays_kana_while_typed() {
+    let mut engine = InputMethodEngine::new();
+    seed_model_cache(&mut engine, "レポ", "", &["レポ"]);
+    engine.live.enabled = true;
+    type_str(&mut engine, "repo");
+    assert_eq!(engine.live_text(), "レポ");
+}

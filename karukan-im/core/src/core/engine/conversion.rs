@@ -419,8 +419,10 @@ impl InputMethodEngine {
         // `windowsでは`) ride right behind the model's first answer.
         if let Some(text) = self.english_mix_candidate(reading) {
             // Leftover romaji in the reading (うぃんどws) means the kana
-            // reading failed on its own: the English reading leads.
-            let leads = reading.chars().any(|c| c.is_ascii_alphabetic());
+            // reading failed on its own, and a word the user spelled out
+            // before (repo) is the one they mean: the English reading leads.
+            let leads = reading.chars().any(|c| c.is_ascii_alphabetic())
+                || self.corrections.is_known(&text.to_ascii_lowercase());
             builder.push_english(
                 leads,
                 AnnotatedCandidate::new(text, CandidateSource::Rewriter)

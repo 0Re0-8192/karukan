@@ -299,8 +299,11 @@ impl InputMethodEngine {
         {
             return None;
         }
-        // A lone English word (tokyo) is offered even when it reads as kana.
-        if raw.len() >= 4 && words().contains(raw.to_ascii_lowercase().as_str()) {
+        // A lone English word (tokyo) is offered even when it reads as kana,
+        // and so is one the user spelled out before (repo).
+        let lower = raw.to_ascii_lowercase();
+        if (raw.len() >= 4 && words().contains(lower.as_str())) || self.corrections.is_known(&lower)
+        {
             return (raw != reading).then_some(raw);
         }
         if !leftover {
@@ -363,7 +366,7 @@ impl InputMethodEngine {
         let pending = self.input_buf.pending();
         let tail = self.converters.romaji.convert_flush(&pending);
         if !self.has_romaji_leftover(converted) {
-            return None;
+            return self.learned_word_as_typed(&pending);
         }
         let romaji = &self.converters.romaji;
         if !with_decimal_points(romaji.convert_flush(&self.raw_keys))
@@ -403,6 +406,22 @@ impl InputMethodEngine {
             })?;
         let text = format!("{}{}", self.assemble_pieces(&pieces), rest);
         text.strip_suffix(tail.as_str()).map(str::to_string)
+    }
+
+    /// A word the user spelled out before (picked as typed from the list,
+    /// F9/F10) shows as typed while it is typed, even where it reads as
+    /// kana (`repo`, not レポ), so Enter commits it as it is. Only the whole
+    /// composition, with nothing pending.
+    fn learned_word_as_typed(&self, pending: &str) -> Option<String> {
+        let raw = &self.raw_keys;
+        let word = raw.to_ascii_lowercase();
+        if !pending.is_empty() || !self.corrections.is_known(&word) {
+            return None;
+        }
+        let romaji = &self.converters.romaji;
+        with_decimal_points(romaji.convert_flush(raw))
+            .eq_ignore_ascii_case(&self.input_buf.settled_reading(romaji))
+            .then(|| raw.clone())
     }
 }
 
