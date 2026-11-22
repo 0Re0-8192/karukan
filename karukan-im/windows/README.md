@@ -38,6 +38,8 @@ MS-IME に合わせています。
 ビルド出力の DLL とサーバーを `dist` へ置き(動作中のものは名前を変えて退避)、`portable.flag` を作り、システム辞書 `data\dict.bin` が無ければ取得し、DLL を登録(管理者権限)して、現在のユーザーで有効にします。解除は `-Uninstall`。置き場は `-Dest`、辞書を取らないなら `-SkipDict`。
 `portable.flag` があると、設定・学習・モデルをそのフォルダ内(`data`・`config`・`hf`)に保存します。登録するのは薄い読み込み役(`karukan_tsf.dll` として置く)で、本体は更新のたびに `karukan_tsf_impl_<日時>.dll` として追加します。読み込み役が TSF の起動のたびに最新の本体を読むので、更新後は入力方式を切り替えて戻す(Win+Space を 2 回)だけで反映され、アプリの再起動は要りません(読み込み役自体を替えたときだけ再起動)。64 ビットのアプリでのみ使えます。
 
+push の前の確認: `.\karukan-im\windows\tools\check.ps1`(整形・clippy `-D warnings`・単体テスト。`-NoTest` なら前の 2 つだけ)。
+
 テスト: `KARUKAN_TSF_DEBUG=1 KARUKAN_IMSERVER=<karukan-imserver.exe> cargo test --release -p karukan-tsf --test tsf_e2e -- --nocapture`
 
 ## 英単語混じり

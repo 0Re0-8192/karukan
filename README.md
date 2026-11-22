@@ -35,6 +35,8 @@
 .\karukan-im\windows\tools\package.ps1
 ```
 
+push の前に `.\karukan-im\windows\tools\check.ps1` を実行する(整形・clippy・テスト。CI は使っていません)。
+
 詳しくは [karukan-im/windows/README.md](karukan-im/windows/README.md)。
 
 ## 元のプロジェクト
