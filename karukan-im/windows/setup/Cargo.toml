@@ -1,7 +1,7 @@
 [package]
 name = "karukan-setup"
 # The product version shown in Settings > Apps; an older setup refuses to replace a newer install.
-version = "0.2.4"
+version = "0.2.5"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

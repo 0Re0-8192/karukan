@@ -377,6 +377,18 @@ fn install(o: &Opts) -> Result<Option<String>> {
             "/Q",
         ],
     );
+    // The shared server runs with an ordinary user's rights whoever starts it, an
+    // elevated app included (a process starts at the lower of its parent's level and
+    // its exe's label), so elevated and ordinary apps share one server.
+    let _ = sys::run_hidden(
+        "icacls",
+        &[
+            &dir.join("karukan-imserver.exe").to_string_lossy(),
+            "/setintegritylevel",
+            "medium",
+            "/Q",
+        ],
+    );
     // the uninstaller: this exe without its payload
     if let Some((off, _, _)) = payload_span(&me)? {
         let dst = dir.join(SETUP_EXE);

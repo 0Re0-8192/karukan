@@ -224,8 +224,10 @@ fn use_shared() -> bool {
     std::env::var_os("KARUKAN_SHARED").is_none_or(|v| v != "0") && crate::shared::eligible()
 }
 
-/// `karukan-<user SID>-<integrity level>-<hash of the install, the server build and
-/// the dictionaries>`.
+/// `karukan-<user SID>-<hash of the install, the server build and the dictionaries>`:
+/// one name for every app of the user, elevated or not. The installer marks the
+/// server exe medium integrity, so it runs with an ordinary user's rights whoever
+/// starts it, and an elevated app (writing down) reaches it like any other.
 fn pipe_name(dir: &std::path::Path) -> Option<String> {
     let sid = crate::shared::user_sid()?;
     let exe = server_exe(dir);
@@ -237,8 +239,7 @@ fn pipe_name(dir: &std::path::Path) -> Option<String> {
         h ^= b as u64;
         h = h.wrapping_mul(0x0000_0100_0000_01b3);
     }
-    let level = crate::shared::integrity().unwrap_or(0);
-    Some(format!("karukan-{sid}-{level:x}-{h:016x}"))
+    Some(format!("karukan-{sid}-{h:016x}"))
 }
 
 /// The shared server this process started last, and when.

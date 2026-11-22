@@ -64,9 +64,8 @@ pub fn integrity() -> Option<u32> {
     })
 }
 
-/// An ordinary desktop app: not an app container, medium integrity or above.
-/// The level is part of the pipe name, so elevated apps share a server of their
-/// own (with UAC off, that is every app) and never one an ordinary app started.
+/// An ordinary desktop app: not an app container, medium integrity or above. A
+/// low-integrity or sandboxed app cannot open the pipe and keeps a private server.
 pub fn eligible() -> bool {
     static OK: OnceLock<bool> = OnceLock::new();
     *OK.get_or_init(|| {
