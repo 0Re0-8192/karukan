@@ -13,6 +13,12 @@
 //! - [`Element::Converted`]: one settled character — a fired rule's kana,
 //!   a passthrough like `1`, or direct input (alphabet/emoji mode). Opaque
 //!   to evaluation; it never reverts.
+//! - [`Element::Settled`]: one character of a conversion result the user
+//!   already chose and kept typing after (the bake, after riq0h/karukan).
+//!   `Converted` to every view here; the chunker holds the leading run of
+//!   them out of the model, since they are a surface, not a reading.
+//!   Carrying that on the character keeps it right across edits: a deletion
+//!   takes the flag with it, and text typed in front ends the leading run.
 //!
 //! **Evaluation** derives everything else: the display, the conversion
 //! reading, and the aux romaji tail. After a romaji keystroke is recorded,
@@ -40,12 +46,14 @@ enum Element {
     /// A settled character: fired rule output (`ko` → こ), passthrough
     /// (`1`), or direct input — excluded from romaji evaluation
     Converted(char),
+    /// A character of a chosen conversion result (see the module doc)
+    Settled(char),
 }
 
 impl Element {
     fn ch(&self) -> char {
         match self {
-            Element::Romaji(ch) | Element::Converted(ch) => *ch,
+            Element::Romaji(ch) | Element::Converted(ch) | Element::Settled(ch) => *ch,
         }
     }
 
@@ -216,7 +224,7 @@ impl InputBuffer {
         for element in &self.elements {
             match element {
                 Element::Romaji(ch) => run.push(*ch),
-                Element::Converted(ch) => {
+                Element::Converted(ch) | Element::Settled(ch) => {
                     if !run.is_empty() {
                         reading.push_str(&romaji.convert_flush(&run));
                         run.clear();
@@ -260,11 +268,27 @@ impl InputBuffer {
     /// leaving katakana mode so the preedit doesn't revert.
     pub fn bake_katakana(&mut self) {
         for element in &mut self.elements {
-            if let Element::Converted(ch) = element {
+            if let Element::Converted(ch) | Element::Settled(ch) = element {
                 let katakana = karukan_engine::hiragana_to_katakana(&ch.to_string());
                 *ch = katakana.chars().next().unwrap_or(*ch);
             }
         }
+    }
+
+    /// Replace the whole composition with the chosen `text`, settled, caret
+    /// at the end: a kept candidate that typing continues after.
+    pub fn replace_all_settled(&mut self, text: &str) {
+        self.elements = text.chars().map(Element::Settled).collect();
+        self.cursor = self.elements.len();
+    }
+
+    /// How many leading characters are a chosen result. Derived, never
+    /// stored, so no edit can leave it stale.
+    pub fn settled_prefix_len(&self) -> usize {
+        self.elements
+            .iter()
+            .take_while(|e| matches!(e, Element::Settled(_)))
+            .count()
     }
 
     /// Move the caret to a display position (also its element index).

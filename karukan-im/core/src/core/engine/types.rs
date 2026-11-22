@@ -381,3 +381,14 @@ pub(in crate::core) struct ConversionMetrics {
     /// Reset when a new word begins (Empty state)
     pub adaptive_use_light_model: bool,
 }
+
+/// A candidate kept by typing on after it (the bake): what the learning
+/// record needs once the composition holds a surface instead of a reading.
+#[derive(Debug, Clone, Default)]
+pub(in crate::core) struct Baked {
+    /// The hiragana behind everything baked so far.
+    pub reading: Option<String>,
+    /// How many characters the last bake settled; anything after them was
+    /// typed later and is still its own reading.
+    pub chars: usize,
+}

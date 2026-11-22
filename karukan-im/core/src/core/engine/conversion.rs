@@ -758,10 +758,13 @@ impl InputMethodEngine {
                     }
                 }
 
-                // A printable character refines instead of committing:
-                // the reading grows and the suggestion rewrites in place,
-                // keeping any active source filter.
+                // A printable character keeps the selected candidate and
+                // typing continues after it (the bake); inside a narrowed
+                // source view typing is the query, so it refines there.
                 if key.to_char().is_some() && !key.modifiers.control_key {
+                    if self.state.filter().is_none() {
+                        return self.bake_selection_then_type(key);
+                    }
                     return self.refine_through_composing(key);
                 }
 
@@ -770,6 +773,53 @@ impl InputMethodEngine {
                 // browser reloading on Ctrl+R).
                 EngineResult::consumed()
             }
+        }
+    }
+
+    /// Keep the selected candidate in the composition, then let the
+    /// keystroke continue after it (after riq0h/karukan): 「きしゃ」 →
+    /// Space → 貴社 → 「のきしゃ」 gives 「貴社の記者」, where dropping back to
+    /// the untouched composition would reconvert the whole reading and lose
+    /// the choice (「記者の記者」). Reaching the Conversion state takes a
+    /// deliberate Space, so whatever is selected — the head of the list
+    /// included, which is where learning puts the usual pick — is a choice.
+    /// Nothing reaches the application before Enter either way.
+    ///
+    /// The kept candidate is learned on the spot, as a pick; the whole
+    /// composition is learned again at the commit, against the hiragana
+    /// behind the baked text ([`Self::learning_reading`]).
+    fn bake_selection_then_type(&mut self, key: &KeyEvent) -> EngineResult {
+        if let Some((text, reading)) = self.selected_conversion_info()
+            && !text.is_empty()
+        {
+            let reading =
+                reading.unwrap_or_else(|| self.input_buf.settled_reading(&self.converters.romaji));
+            let reading = self.learning_reading(&reading);
+            self.record_learning(&reading, &text);
+            self.baked = Baked {
+                reading: Some(reading),
+                chars: text.chars().count(),
+            };
+            self.input_buf.replace_all_settled(&text);
+            self.raw_keys.clear();
+            self.live.shown = false;
+            self.chunks.clear();
+            self.chunk_breaks.clear();
+        }
+        self.set_composing_state();
+        self.process_key_composing(key)
+    }
+
+    /// The reading to learn a commit of the whole composition against:
+    /// with a candidate baked in, the hiragana behind it plus what was typed
+    /// after it; otherwise `reading` itself.
+    pub(super) fn learning_reading(&self, reading: &str) -> String {
+        match &self.baked.reading {
+            Some(behind) => {
+                let tail: String = reading.chars().skip(self.baked.chars).collect();
+                format!("{behind}{tail}")
+            }
+            None => reading.to_string(),
         }
     }
 
@@ -877,7 +927,8 @@ impl InputMethodEngine {
         };
         self.note_conversion_commit(text, first.as_deref());
         if let Some(reading) = reading {
-            self.record_learning(reading, text);
+            let reading = self.learning_reading(reading);
+            self.record_learning(&reading, text);
         }
         self.end_composition();
     }

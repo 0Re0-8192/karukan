@@ -6,6 +6,7 @@ use super::*;
 use crate::core::keycode::KeyModifiers;
 
 mod alphabet;
+mod bake;
 mod basic;
 mod candidate_window;
 mod candidates;

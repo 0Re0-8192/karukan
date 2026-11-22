@@ -173,6 +173,8 @@ pub struct InputMethodEngine {
     input_buf: InputBuffer,
     /// Live conversion state
     live: LiveConversion,
+    /// The candidate kept by typing on after it, if any
+    baked: Baked,
     /// Internal chunking of the composing buffer built by
     /// `chunked_auto_suggest`: the current per-chunk conversions, rebuilt from
     /// scratch on every keystroke (per-chunk model calls are deduplicated by
@@ -236,6 +238,7 @@ impl InputMethodEngine {
             mode: ModeState::default(),
             input_buf: InputBuffer::new(),
             live: LiveConversion::default(),
+            baked: Baked::default(),
             chunks: Vec::new(),
             chunk_breaks: Vec::new(),
             raw_keys: String::new(),
@@ -350,6 +353,7 @@ impl InputMethodEngine {
         self.chunk_breaks.clear();
         self.raw_keys.clear();
         self.english_live = None;
+        self.baked = Baked::default();
         self.shown_suggestions = CandidateList::default();
     }
 
@@ -771,6 +775,7 @@ impl InputMethodEngine {
             InputState::Empty => String::new(),
             InputState::Composing { .. } => {
                 let (reading, text) = self.resolve_composing_commit();
+                let reading = self.learning_reading(&reading);
                 self.record_live_learning(&reading, &text);
                 self.note_live_commit(&reading, &text);
                 self.end_composition();

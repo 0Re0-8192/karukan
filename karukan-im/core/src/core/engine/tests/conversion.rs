@@ -98,8 +98,9 @@ fn committed(result: &EngineResult) -> Option<String> {
 
 #[test]
 fn test_bare_digit_during_conversion_refines_instead_of_selecting() {
-    // Digits are plain text input everywhere: during conversion they extend
-    // the reading like any printable char, never select a candidate.
+    // Digits are plain text input everywhere: during conversion they type on
+    // like any printable char, never select a candidate. A printable char
+    // keeps the selection first (tests/bake.rs), so the digit lands after 藍.
     let mut engine = InputMethodEngine::new();
     engine.dicts.user = Some(std::sync::Arc::new(dict_from_json(
         r#"[{"reading":"あい","candidates":[{"surface":"藍","score":1.0}]}]"#,
@@ -112,7 +113,7 @@ fn test_bare_digit_during_conversion_refines_instead_of_selecting() {
 
     let result = engine.process_key(&press('2'));
     assert!(committed(&result).is_none(), "a digit must not commit");
-    assert_eq!(engine.input_buf.reading(), "あい2");
+    assert_eq!(engine.input_buf.reading(), "藍2");
 }
 
 #[test]

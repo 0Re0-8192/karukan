@@ -462,6 +462,7 @@ impl InputMethodEngine {
                 .with_action(EngineAction::HideAuxText);
         }
 
+        let reading = self.learning_reading(&reading);
         self.record_live_learning(&reading, &text);
         self.note_live_commit(&reading, &text);
         self.end_composition();
