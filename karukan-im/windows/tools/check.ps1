@@ -18,6 +18,9 @@ New-Item -ItemType Directory -Force $Temp | Out-Null
 $env:TEMP = $Temp
 $env:TMP = $Temp
 if (-not $env:LIBCLANG_PATH) { $env:LIBCLANG_PATH = 'D:\Tools\libclang\clang\native' }
+# the toolchain and registry on D: (the default cargo home is on C:, and its registry is stale here)
+if (-not $env:CARGO_HOME -and (Test-Path 'D:\Tools\cargo-home')) { $env:CARGO_HOME = 'D:\Tools\cargo-home'; $env:PATH = "D:\Tools\cargo-home\bin;$env:PATH" }
+if (-not $env:RUSTUP_HOME -and (Test-Path 'D:\Tools\rustup')) { $env:RUSTUP_HOME = 'D:\Tools\rustup' }
 $ninja = 'C:\Program Files (x86)\Microsoft Visual Studio\2022\Preview\Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja'
 if (Test-Path $ninja) {
     $env:PATH = "$ninja;$env:PATH"
