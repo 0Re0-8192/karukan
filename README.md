@@ -1,66 +1,48 @@
 <div align="center">
   <img src="icon.png" width="128" alt="karukan" />
-  <h1>Karukan</h1>
-  <p>Linux・macOS向け日本語入力システム — ニューラルかな漢字変換エンジン</p>
+  <h1>karukan for Windows</h1>
+  <p>ニューラルかな漢字変換の日本語入力(TSF)</p>
 
-  [![CI (engine)](https://github.com/togatoga/karukan/actions/workflows/karukan-engine-ci.yml/badge.svg)](https://github.com/togatoga/karukan/actions/workflows/karukan-engine-ci.yml)
-  [![CI (im)](https://github.com/togatoga/karukan/actions/workflows/karukan-im-ci.yml/badge.svg)](https://github.com/togatoga/karukan/actions/workflows/karukan-im-ci.yml)
-  [![CI (fcitx5)](https://github.com/togatoga/karukan/actions/workflows/karukan-fcitx5-ci.yml/badge.svg)](https://github.com/togatoga/karukan/actions/workflows/karukan-fcitx5-ci.yml)
-  [![CI (macos)](https://github.com/togatoga/karukan/actions/workflows/karukan-macos-ci.yml/badge.svg)](https://github.com/togatoga/karukan/actions/workflows/karukan-macos-ci.yml)
   [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE-MIT)
 </div>
 
-<div align="center">
-  <img src="images/demo.gif" width="800" alt="karukan demo" />
-</div>
+[karukan](https://github.com/togatoga/karukan)(Linux・macOS 向け)を Windows に移植したものです。モデルと辞書を同梱しているので、オフラインで使えます。
 
-## プロジェクト構成
+## 入れ方
 
-IME本体(コアエンジン + 各プラットフォームのフロントエンド)は `karukan-im/` 配下にまとまっています。
+1. [Releases](https://github.com/0Re0-8192/karukan-windows/releases/latest) から `karukan-setup-<版>.exe` を取得する。
+2. 実行して「入れる」を選ぶ(管理者の確認が 1 回出ます)。
+3. Win+Space で karukan を選ぶ。
 
-- [karukan-im/](karukan-im/) — IME本体
-  - [core/](karukan-im/core/) — 共有IMEエンジン(crate: `karukan-im`) — ステートマシン、ローマ字変換、karukan-imserver(macOS向けJSON-RPCサーバー)
-  - [fcitx5/](karukan-im/fcitx5/) — Linux向けフロントエンド(crate: `karukan-fcitx5`) — fcitx5アドオン + C FFI
-  - [macos/](karukan-im/macos/) — macOS向けフロントエンド — Swift/InputMethodKit
-- [karukan-engine/](karukan-engine/) — コアライブラリ — ローマ字→ひらがな変換 + llama.cppによるニューラルかな漢字変換
-- [karukan-cli/](karukan-cli/) — CLIツール・サーバー — 辞書ビルド、Sudachi辞書生成、辞書ビューア、AJIMEE-Bench、HTTPサーバー
+- 更新: 新しい版の setup を実行して「更新」。学習・設定・ユーザー辞書は残ります。
+- 外す: 設定 > アプリ から karukan をアンインストール。
+- 64 ビットのアプリでのみ使えます。exe は未署名なので、SmartScreen の警告が出たら「詳細情報」→「実行」。
 
-## 特徴
+## Windows 版で足したもの
 
-- **ニューラルかな漢字変換**: GPT-2/Qwen3ベースのモデルをllama.cppで推論し、高度な日本語変換
-- **ライブ変換**: 入力と同時に変換結果をリアルタイム表示。Spaceを押さずに変換が進む（`Ctrl+Shift+L` でON/OFF）
-- **コンテキスト対応**: 周辺テキストを考慮した日本語変換
-- **変換学習**: ユーザーが選択した変換結果を記憶し、次回以降の変換で優先表示。予測変換（前方一致）にも対応し、入力途中でも学習済みの候補を提示
-- **システム辞書**: [SudachiDict](https://github.com/WorksApplications/SudachiDict)の辞書データからシステム辞書を構築
-- **候補リライター (Mozcから移植)**: 半角カタカナ、英字の大文字小文字・全角半角、記号の関連候補、数字の各種表記（漢数字・大字・ローマ数字・丸数字・16/8/2進数）を自動生成。各候補にはMozc由来の注釈（「半角カタカナ」「16進数」など）が付く
-- **単漢字変換**: 読み全体を漢字1文字ずつ候補にする（「たか」→ 高・嵩・鷹など）。モデルや辞書が出さない字を候補一覧の後方から拾える。旧字体・異体字には「高の異体字」のような注釈付き（[単漢字変換](docs/single-kanji.md) 参照）
-- **絵文字入力**: かな読み（`ぴえん` → 🥺、`きんにく` → 💪）と Slack 風 `:trigger` クエリ（`:smile` → 😄、`:halo` → 😇）の両方をサポート
-- **変換ペルソナ**: よく書く文章と関連のあるキーワードを config.toml に書くと、それに寄せた変換が出やすくなる（[変換ペルソナ](docs/persona.md) 参照）
+- MS-IME 準拠のキー(半角/全角・変換・無変換・F6〜F10)。一覧は [karukan-im/windows/README.md](karukan-im/windows/README.md)
+- 英単語をローマ字のまま打っても英字の候補が出る(`windowsdeha` → `windowsでは`)
+- 改行をまたいだ文脈(前の行を文として左文脈に入れる、最大 25 文字)
+- 既定モデル [jinen-v2-small-karukan](https://huggingface.co/OReOOreoaaaa/jinen-v2-small-karukan.gguf): jinen-v2-small を、短い読みを左文脈つきで変換する使い方に合わせて追加学習したもの
+- インストーラー(上書き更新、アプリの再起動なしで反映)
 
-> **Note:** 初回起動時にHugging Faceからモデルをバックグラウンドでダウンロードします。ダウンロード中もかな入力と辞書変換はそのまま使え、モデルの読み込みが完了すると自動でニューラル変換が有効になります。ネットワークを使うのはこの初回ダウンロードだけで、2回目以降はダウンロード済みのモデルが使われます。
+設定は [docs/configuration.md](docs/configuration.md)、キーは [docs/key-bindings.md](docs/key-bindings.md)。
 
-## インストール
+## ビルド
 
-- **Linux (fcitx5)**: [karukan-fcitx5 の README](karukan-im/fcitx5/README.md#install) を参照
-- **macOS**: [karukan-macos の README](karukan-im/macos/README.md) を参照
+```powershell
+.\karukan-im\windows\tools\build.ps1
+.\karukan-im\windows\tools\package.ps1
+```
 
-## ドキュメント
+詳しくは [karukan-im/windows/README.md](karukan-im/windows/README.md)。
 
-- [キーバインド一覧](docs/key-bindings.md) — 共通キーバインドと Linux / macOS 固有キー
-- [設定](docs/configuration.md) — config.toml の設定項目、ライブ変換、変換ストラテジー、学習キャッシュ
-- [辞書](docs/dictionary.md) — システム辞書のインストール、ユーザー辞書、候補の優先順位
-- [ユーザー辞書](docs/user-dictionary.md) — 対応形式（Mozc/Google IME TSV・バイナリ）と登録方法
-- [変換ペルソナ](docs/persona.md) — よく書く文章と関連のあるキーワードを書いて、変換をそれに寄せる方法
-- [Chunk](docs/chunking.md) — 変換が Chunk に区切られる場所と、自分で区切って表示を固定する方法
-- [記号・半角全角](docs/symbols.md) — 句読点や括弧の種類、記号・数字・英字の幅、スペースの設定
-- [単漢字変換](docs/single-kanji.md) — 読みを漢字1文字ずつに変換する候補と、そのデータの編集方法
-- [ローマ字テーブル](docs/romaji-table.md) — azooKey / hazkey 形式のテーブルで独自のローマ字配列を使う方法
+## 元のプロジェクト
+
+エンジン・辞書・Linux/macOS 版は [togatoga/karukan](https://github.com/togatoga/karukan) によるものです。元の README は [README.karukan.md](README.karukan.md)。
 
 ## ライセンス
 
-MIT OR Apache-2.0 のデュアルライセンスで提供しています。
-
-- [MIT License](LICENSE-MIT)
-- [Apache License 2.0](LICENSE-APACHE)
-
-[karukan-engine/data/](karukan-engine/data/) 配下には [Mozc](https://github.com/google/mozc) から派生したデータを含み、こちらは [BSD 3-Clause License](http://opensource.org/licenses/BSD-3-Clause) のもとで配布されています。各派生ファイルの由来およびMozcの著作権表記は [THIRD_PARTY_LICENSES](THIRD_PARTY_LICENSES) を参照してください。
+- コード: MIT または Apache-2.0
+- 変換モデル: CC BY-SA 4.0([jinen-v2-small-karukan](https://huggingface.co/OReOOreoaaaa/jinen-v2-small-karukan.gguf)、[jinen-v2-xsmall](https://huggingface.co/togatogah/jinen-v2-xsmall.gguf))
+- システム辞書: SudachiDict をもとに構築、Apache-2.0
