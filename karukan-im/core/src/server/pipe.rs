@@ -42,6 +42,9 @@ use windows::core::{HSTRING, PWSTR};
 
 use super::ImServer;
 
+/// How often a connection's learning cache is saved while it stays open.
+const SAVE_EVERY: Duration = Duration::from_secs(60);
+
 /// One request at a time across all connections.
 static DISPATCH: Mutex<()> = Mutex::new(());
 
@@ -232,6 +235,7 @@ fn serve_one(file: File) -> anyhow::Result<()> {
     let mut writer = file.try_clone()?;
     let reader = BufReader::new(file);
     let mut server = ImServer::new();
+    let mut last_save = Instant::now();
     for line in reader.lines() {
         let Ok(line) = line else { break };
         if line.trim().is_empty() {
@@ -245,6 +249,14 @@ fn serve_one(file: File) -> anyhow::Result<()> {
             && writeln!(writer, "{response}").is_err()
         {
             break;
+        }
+        // An app can stay connected for days, and a server killed at log-off or by
+        // the uninstaller says no goodbye: save what was learned now and then
+        // (after the reply, so the key is not kept waiting; a no-op when clean).
+        if last_save.elapsed() >= SAVE_EVERY {
+            last_save = Instant::now();
+            let _one_at_a_time = DISPATCH.lock().unwrap_or_else(|e| e.into_inner());
+            server.save_learning();
         }
     }
     // the app is gone: what it learned is merged into the file

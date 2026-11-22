@@ -566,6 +566,8 @@ fn uninstall(o: &Opts) -> Result<Option<String>> {
         }
         sys::delete_app_entry();
     }
+    // the shared server outlives the apps: stop it so its files can go
+    sys::stop_servers(&dir);
     let stamp = stamp();
     let mut left = BTreeSet::new();
     for rel in manifest.files.keys() {

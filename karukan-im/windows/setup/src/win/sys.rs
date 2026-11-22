@@ -362,3 +362,63 @@ pub fn spawn_cmd_detached(line: &str) -> Result<()> {
 
 #[allow(dead_code)]
 fn _unused(_: HWND) {}
+
+/// Stop the karukan servers running from `dir` (the shared one outlives every app,
+/// and a running exe cannot be deleted). It saves its learning cache every minute,
+/// so stopping it loses at most that much. Returns how many were stopped.
+pub fn stop_servers(dir: &Path) -> usize {
+    use windows::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW,
+        TH32CS_SNAPPROCESS,
+    };
+    use windows::Win32::System::Threading::{
+        OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_TERMINATE,
+        QueryFullProcessImageNameW, TerminateProcess,
+    };
+    let Ok(dir) = dir.canonicalize() else {
+        return 0;
+    };
+    let mut stopped = 0;
+    unsafe {
+        let Ok(snap) = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) else {
+            return 0;
+        };
+        let mut pe = PROCESSENTRY32W {
+            dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32,
+            ..Default::default()
+        };
+        let mut more = Process32FirstW(snap, &mut pe).is_ok();
+        while more {
+            let len = pe.szExeFile.iter().position(|&c| c == 0).unwrap_or(0);
+            let name = String::from_utf16_lossy(&pe.szExeFile[..len]).to_ascii_lowercase();
+            if name.starts_with("karukan-imserver")
+                && let Ok(h) = OpenProcess(
+                    PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_TERMINATE,
+                    false,
+                    pe.th32ProcessID,
+                )
+            {
+                let mut buf = [0u16; 1024];
+                let mut n = buf.len() as u32;
+                let here = QueryFullProcessImageNameW(
+                    h,
+                    PROCESS_NAME_WIN32,
+                    windows::core::PWSTR(buf.as_mut_ptr()),
+                    &mut n,
+                )
+                .is_ok()
+                    && PathBuf::from(String::from_utf16_lossy(&buf[..n as usize]))
+                        .canonicalize()
+                        .is_ok_and(|p| p.starts_with(&dir));
+                if here && TerminateProcess(h, 1).is_ok() {
+                    let _ = WaitForSingleObject(h, 3000);
+                    stopped += 1;
+                }
+                let _ = CloseHandle(h);
+            }
+            more = Process32NextW(snap, &mut pe).is_ok();
+        }
+        let _ = CloseHandle(snap);
+    }
+    stopped
+}
