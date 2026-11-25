@@ -415,10 +415,44 @@ fn live_engine() -> InputMethodEngine {
 fn the_conversion_shows_again_when_the_caret_is_back_at_the_end() {
     let mut engine = live_engine();
     assert_eq!(engine.preedit().unwrap().text(), "今日は雨");
-    engine.process_key(&press_key(Keysym::LEFT));
-    assert_eq!(engine.preedit().unwrap().text(), "きょうはあめ");
+    engine.process_key(&press_key(Keysym::HOME));
+    engine.process_key(&press_key(Keysym::RIGHT));
+    assert_eq!(engine.preedit().unwrap().text(), "きょうは雨");
     engine.process_key(&press_key(Keysym::END));
     assert_eq!(engine.preedit().unwrap().text(), "今日は雨");
+}
+
+fn shown(engine: &InputMethodEngine) -> (String, usize) {
+    let p = engine.preedit().unwrap();
+    (p.text().to_string(), p.caret())
+}
+
+#[test]
+fn only_the_word_under_the_caret_goes_back_to_kana() {
+    let mut engine = live_engine();
+    let steps = [
+        ("今日はあめ", 4), // inside 雨
+        ("今日は雨", 3),   // between は and 雨: both converted
+        ("今日は雨", 2),   // between 今日 and は
+        ("きょうは雨", 2), // inside 今日
+        ("きょうは雨", 1),
+        ("今日は雨", 0), // at the start
+    ];
+    for (text, caret) in steps {
+        engine.process_key(&press_key(Keysym::LEFT));
+        assert_eq!(shown(&engine), (text.to_string(), caret));
+    }
+}
+
+#[test]
+fn typing_inside_a_word_shows_the_keys_there() {
+    let mut engine = live_engine();
+    engine.process_key(&press_key(Keysym::LEFT));
+    engine.process_key(&press('k'));
+    // the live conversion of きょうはあkめ is not seeded: kana, keys at the caret
+    let (text, caret) = shown(&engine);
+    assert!(text.ends_with("あkめ"), "{text}");
+    assert_eq!(text.chars().nth(caret - 1), Some('k'));
 }
 
 #[test]

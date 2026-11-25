@@ -42,9 +42,9 @@ impl InputMethodEngine {
 
     /// Build a preedit for composing state.
     /// If live conversion text is present, shows live text + pending romaji
-    /// with caret at end. That layout is only faithful while typing at the
-    /// end of the composition — when the cursor is elsewhere the pending is
-    /// not the visual tail, so fall back to the kana display.
+    /// with caret at end. With the caret inside, only the word it is in goes
+    /// back to kana for editing (`segmented_display`), or the whole
+    /// composition when the conversion cannot be split into words.
     /// Otherwise shows the input buffer display with cursor-based caret.
     pub(super) fn build_composing_preedit(&self) -> Preedit {
         let live = self.live_text();
@@ -55,12 +55,66 @@ impl InputMethodEngine {
             let display = format!("{}{}", live, buffer);
             let caret = display.chars().count();
             (display, caret)
+        } else if let Some(shown) = (!live.is_empty())
+            .then(|| self.segmented_display())
+            .flatten()
+        {
+            shown
         } else {
             (self.build_input_display(), self.input_buf.cursor())
         };
         let mut preedit = Preedit::with_text_underlined(&display);
         preedit.set_caret(caret);
         preedit
+    }
+
+    /// The live conversion with the caret inside it: every word stays
+    /// converted except the one the caret is in, which shows its reading
+    /// (and the keystrokes being typed there) for editing — 今日は|雨 →
+    /// 今日はあ|め. A caret between two words leaves both converted. `None`
+    /// when the words cannot be told apart (an English-mixed text, a chunk
+    /// whose conversion rewrote its kana) or the chunks are not the buffer's.
+    fn segmented_display(&self) -> Option<(String, usize)> {
+        if self.english_live.is_some() || self.chunks.is_empty() {
+            return None;
+        }
+        let reading: Vec<char> = self.input_buf.reading().chars().collect();
+        let chunked: String = self.chunks.iter().map(|c| c.reading.as_str()).collect();
+        if chunked.chars().ne(reading.iter().copied()) {
+            return None;
+        }
+        let mut segments = Vec::new();
+        for chunk in &self.chunks {
+            let surface = self.settle_text(&chunk.converted);
+            segments.extend(super::align::align(&chunk.reading, &surface)?);
+        }
+        let at = self.input_buf.reading_cursor();
+        let pending = self.input_buf.pending();
+        let mut text = String::new();
+        let mut caret = None;
+        let mut start = 0;
+        for seg in segments {
+            let end = start + seg.reading;
+            if start < at && at < end {
+                // the caret's word, as typed
+                text.extend(&reading[start..at]);
+                text.push_str(&pending);
+                caret = Some(text.chars().count());
+                text.extend(&reading[at..end]);
+            } else {
+                if at == start && caret.is_none() {
+                    text.push_str(&pending);
+                    caret = Some(text.chars().count());
+                }
+                text.push_str(&seg.surface);
+            }
+            start = end;
+        }
+        let caret = caret.unwrap_or_else(|| {
+            text.push_str(&pending);
+            text.chars().count()
+        });
+        Some((text, caret))
     }
 
     /// The live conversion result as displayed: live text plus the settled
