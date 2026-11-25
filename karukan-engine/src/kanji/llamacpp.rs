@@ -318,6 +318,9 @@ impl LlamaCppModel {
 
         let model = LlamaModel::load_from_file(backend, path.as_ref(), &model_params)
             .map_err(|e| KanjiError::ModelLoad(e.into()))?;
+        // the machine's load is watched from here on, so the first
+        // conversion already knows how many threads it gets
+        super::load::watch();
 
         let tokenizer = load_tokenizer(tokenizer_json)?;
         let special_token_ids = tokenizer

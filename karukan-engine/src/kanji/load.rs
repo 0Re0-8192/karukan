@@ -8,15 +8,17 @@
 //! 13900T with every core busy, 1.2–1.7 s per keystroke at 2, 4 or 8
 //! threads, even at high priority. One thread never waits on another: on the
 //! same machine it took 76 ms (121 ms at worst). So while the other processes
-//! leave fewer free cores than the configured threads, a
-//! conversion runs on one thread, and goes back to the configured count once
-//! the machine has been calm for [`CALM_FOR`].
+//! leave fewer free cores than the configured threads, a conversion runs on
+//! one thread, and goes back to the configured count once the machine has
+//! been calm for [`CALM_FOR`].
 //!
-//! The load is read from the system's CPU times at each conversion, over the
-//! time since the previous reading, minus this process's own share. After a
-//! pause in typing that window is long, which averages a sustained load (what
-//! a render or a game is) correctly. Only Windows is probed; elsewhere the
-//! configured count is used as it is.
+//! The load is the system's CPU time minus this process's own share, read by
+//! a thread of its own every [`WATCH_EVERY`] from the first model load on,
+//! and at each conversion. Reading only at conversions left the first one
+//! after the load began judged by the window since the previous keystroke —
+//! seconds of a calm machine — and that one conversion ran on every thread
+//! and stalled for up to 7 s on the 13900T. Only Windows is probed; elsewhere
+//! the configured count is used as it is.
 
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -29,6 +31,10 @@ const MIN_WINDOW: Duration = Duration::from_millis(100);
 /// Switching rebuilds the greedy session (one prompt decode), so it must not
 /// flicker with every burst of load.
 const CALM_FOR: Duration = Duration::from_secs(2);
+
+/// How often the watching thread reads the load: two system calls, so the
+/// verdict is never older than this.
+const WATCH_EVERY: Duration = Duration::from_millis(500);
 
 /// llama.cpp's own thread count when none is configured.
 const LLAMA_DEFAULT_THREADS: u32 = 4;
@@ -124,16 +130,45 @@ fn cpus() -> u32 {
     std::thread::available_parallelism().map_or(1, |n| n.get() as u32)
 }
 
+/// Start reading the load every [`WATCH_EVERY`] on a thread of its own, once
+/// per process (a model load calls this, so the verdict is fresh by the
+/// first keystroke). Nothing happens where the load is not probed.
+pub(super) fn watch() {
+    static STARTED: std::sync::Once = std::sync::Once::new();
+    STARTED.call_once(|| {
+        if read_times().is_none() {
+            return;
+        }
+        let _ = std::thread::Builder::new()
+            .name("karukan-load".into())
+            .spawn(|| {
+                loop {
+                    std::thread::sleep(WATCH_EVERY);
+                    if let Some(times) = read_times() {
+                        PROBE.lock().unwrap_or_else(|e| e.into_inner()).sample(
+                            Instant::now(),
+                            times,
+                            cpus(),
+                        );
+                    }
+                }
+            });
+    });
+}
+
 /// The thread count for a conversion starting now: `configured` (0 =
 /// llama.cpp's default), or 1 while the machine is crowded.
 pub(super) fn threads_for(configured: u32) -> u32 {
+    watch();
     let Some(times) = read_times() else {
         return configured;
     };
-    PROBE
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .threads(configured, Instant::now(), times, cpus())
+    PROBE.lock().unwrap_or_else(|e| e.into_inner()).threads(
+        configured,
+        Instant::now(),
+        times,
+        cpus(),
+    )
 }
 
 /// Not read in this crate's own tests: they run side by side, and a thread
