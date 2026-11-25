@@ -23,7 +23,8 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, bail};
 use windows::Win32::Foundation::{
-    CloseHandle, ERROR_ACCESS_DENIED, ERROR_PIPE_CONNECTED, HANDLE, HLOCAL, LocalFree,
+    CloseHandle, ERROR_ACCESS_DENIED, ERROR_ALREADY_EXISTS, ERROR_PIPE_CONNECTED, GetLastError,
+    HANDLE, HLOCAL, LocalFree,
 };
 use windows::Win32::Security::Authorization::{
     ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
@@ -34,10 +35,10 @@ use windows::Win32::Security::{
 };
 use windows::Win32::Storage::FileSystem::{FILE_FLAG_FIRST_PIPE_INSTANCE, PIPE_ACCESS_DUPLEX};
 use windows::Win32::System::Pipes::{
-    ConnectNamedPipe, CreateNamedPipeW, PIPE_READMODE_BYTE, PIPE_REJECT_REMOTE_CLIENTS,
-    PIPE_TYPE_BYTE, PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
+    ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, PIPE_READMODE_BYTE,
+    PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_BYTE, PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
 };
-use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+use windows::Win32::System::Threading::{CreateMutexW, GetCurrentProcess, OpenProcessToken};
 use windows::core::{HSTRING, PWSTR};
 
 use super::ImServer;
@@ -152,6 +153,20 @@ fn create_instance(path: &HSTRING, sec: &Security, first: bool) -> anyhow::Resul
 pub fn serve(name: &str, idle_exit: Duration) -> anyhow::Result<()> {
     let path = HSTRING::from(format!(r"\\.\pipe\{name}"));
     let sec = Security::for_current_user().context("pipe security")?;
+    // One server per name, held for the life of the process. The pipe alone
+    // cannot promise that: `FILE_FLAG_FIRST_PIPE_INSTANCE` only fails while
+    // an instance exists, and a second server starting in a moment with none
+    // would take the name too and share it — two servers, each with its own
+    // models in memory (seen: two at once for one pipe name).
+    let lock = HSTRING::from(format!(r"Local\{name}"));
+    let mutex =
+        unsafe { CreateMutexW(Some(&sec.attributes()), false, &lock) }.context("server lock")?;
+    if unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
+        tracing::info!("{name} is already served; exiting");
+        return Ok(());
+    }
+    // a HANDLE is never closed on drop: the lock goes with the process
+    let _ = mutex;
     let first = match create_instance(&path, &sec, true)? {
         Instance::Created(h) => h,
         Instance::Taken => {
@@ -210,9 +225,12 @@ pub fn serve(name: &str, idle_exit: Duration) -> anyhow::Result<()> {
         if let Err(e) = unsafe { ConnectNamedPipe(h, None) }
             && e.code() != ERROR_PIPE_CONNECTED.to_hresult()
         {
+            // A client that left before the connection was made: reuse the
+            // instance rather than close it, so the name never goes without one.
             unsafe {
-                let _ = CloseHandle(h);
+                let _ = DisconnectNamedPipe(h);
             }
+            next = Some(h);
             continue;
         }
         active.fetch_add(1, Ordering::SeqCst);
