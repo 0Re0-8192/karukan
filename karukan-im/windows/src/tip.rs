@@ -54,6 +54,11 @@ pub struct State {
     aux: Option<String>,
     composition: Option<ITfComposition>,
     has_preedit: bool,
+    /// The composition text last written, to tell a text change from a
+    /// caret move (`caret_after_text_change`).
+    shown_text: String,
+    /// A caret to set again in a session of its own (see `update_preedit`).
+    caret_retry: Option<usize>,
     /// The candidate window stands at the caret or the window, not at the text.
     anchor_provisional: bool,
     open: bool,
@@ -76,6 +81,8 @@ impl State {
             aux: None,
             composition: None,
             has_preedit: false,
+            shown_text: String::new(),
+            caret_retry: None,
             anchor_provisional: false,
             open: true,
             context: None,
@@ -813,19 +820,85 @@ fn update_preedit(
         }
     }
     // caret
+    let caret_units = utf16_offset(text, caret);
+    unsafe {
+        let _ = set_caret(ec, ctx, &range, caret_units);
+    }
+    let mut st = state.borrow_mut();
+    // A Chromium host (Chrome, Electron apps) ignores a caret set in the same
+    // session that changed the text, and draws it where its own bookkeeping
+    // left it, at an edge of the change: 今日は|海 → → showed は|うみ for
+    // はう|み. A caret move alone is honored, so the caret is set again in a
+    // session of its own when the text changed and the caret is not at its
+    // end (at the end the host lands on it anyway).
+    if st.shown_text != text && caret < text.chars().count() {
+        st.caret_retry = Some(caret_units as usize);
+    }
+    st.shown_text = text.to_string();
+    st.has_preedit = true;
+    Ok(())
+}
+
+/// Put the caret `units` UTF-16 units into the composition `range`.
+unsafe fn set_caret(ec: u32, ctx: &ITfContext, range: &ITfRange, units: i32) -> Result<()> {
     unsafe {
         let r = range.Clone()?;
         let mut halted: i32 = 0;
         r.Collapse(ec, TF_ANCHOR_START)?;
-        r.ShiftEnd(ec, utf16_offset(text, caret), &mut halted, std::ptr::null())?;
+        r.ShiftEnd(ec, units, &mut halted, std::ptr::null())?;
         r.Collapse(ec, TF_ANCHOR_END)?;
-        let _ = set_selection(ec, ctx, r);
+        set_selection(ec, ctx, r)
     }
-    state.borrow_mut().has_preedit = true;
-    Ok(())
+}
+
+/// Sets the caret again, alone (see `update_preedit`).
+#[implement(ITfEditSession)]
+struct CaretSession {
+    state: Rc<RefCell<State>>,
+    ctx: ITfContext,
+    units: usize,
+}
+
+impl ITfEditSession_Impl for CaretSession_Impl {
+    fn DoEditSession(&self, ec: u32) -> Result<()> {
+        guard(Ok(()), || {
+            let comp = self.state.borrow().composition.clone();
+            if let Some(c) = comp {
+                unsafe {
+                    let range = c.GetRange()?;
+                    set_caret(ec, &self.ctx, &range, self.units as i32)?;
+                }
+            }
+            Ok(())
+        })
+    }
+}
+
+/// The caret `update_preedit` asked to set again, in a session of its own.
+fn retry_caret(state: &Rc<RefCell<State>>, ctx: &ITfContext) {
+    let Some(units) = state.borrow_mut().caret_retry.take() else {
+        return;
+    };
+    let tid = state.borrow().tid;
+    let session: ITfEditSession = CaretSession {
+        state: state.clone(),
+        ctx: ctx.clone(),
+        units,
+    }
+    .into();
+    let hr =
+        unsafe { ctx.RequestEditSession(tid, &session, TF_ES_ASYNCDONTCARE | TF_ES_READWRITE) };
+    if !matches!(hr, Ok(h) if h.is_ok()) {
+        diag(&format!("caret session failed: {hr:?}"));
+    }
 }
 
 fn end_composition(state: &Rc<RefCell<State>>, ec: u32, ctx: &ITfContext) {
+    {
+        let mut st = state.borrow_mut();
+        st.shown_text.clear();
+        st.caret_retry = None;
+    }
     let comp = state.borrow_mut().composition.take();
     if let Some(c) = comp {
         unsafe {
@@ -853,7 +926,10 @@ fn commit(state: &Rc<RefCell<State>>, ec: u32, ctx: &ITfContext, text: &str) -> 
             let _ = ins.InsertTextAtSelection(ec, Default::default(), &wide(text))?;
         }
     }
-    state.borrow_mut().has_preedit = false;
+    let mut st = state.borrow_mut();
+    st.has_preedit = false;
+    st.shown_text.clear();
+    st.caret_retry = None;
     Ok(())
 }
 
@@ -1052,6 +1128,7 @@ impl TextService_Impl {
             }
         }
         request_session(&self.state, ctx, result.actions, &self.sink(), true);
+        retry_caret(&self.state, ctx);
         consumed
     }
 
