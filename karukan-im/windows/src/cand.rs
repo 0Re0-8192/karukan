@@ -173,6 +173,34 @@ fn ensure_fonts(scale: f32) -> (HFONT, HFONT) {
 /// What a click on the candidate row at an index on the page does.
 pub type OnPick = Box<dyn Fn(usize)>;
 
+/// Work for this thread to do from its message loop, outside whatever TSF
+/// call is under way when it is asked for.
+pub type Task = Box<dyn FnOnce()>;
+
+const WM_KARUKAN_TASK: u32 = windows::Win32::UI::WindowsAndMessaging::WM_APP + 0x4b;
+
+thread_local! {
+    static TASKS: RefCell<Vec<Task>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Run `task` from this thread's message loop. `false` when there is no
+/// window to post to.
+pub fn post_task(task: Task) -> bool {
+    let Some(h) = ensure_window() else {
+        return false;
+    };
+    TASKS.with(|t| t.borrow_mut().push(task));
+    unsafe {
+        windows::Win32::UI::WindowsAndMessaging::PostMessageW(
+            Some(h),
+            WM_KARUKAN_TASK,
+            WPARAM(0),
+            LPARAM(0),
+        )
+        .is_ok()
+    }
+}
+
 thread_local! {
     /// Set by the text service.
     static ON_PICK: RefCell<Option<OnPick>> = const { RefCell::new(None) };
@@ -214,6 +242,13 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
                         }
                     });
                 }
+            }
+            LRESULT(0)
+        }
+        WM_KARUKAN_TASK => {
+            let tasks = TASKS.with(|t| std::mem::take(&mut *t.borrow_mut()));
+            for task in tasks {
+                task();
             }
             LRESULT(0)
         }

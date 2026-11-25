@@ -24,16 +24,19 @@ use std::path::{Path, PathBuf};
 
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows::Win32::Globalization::{LCMAP_FULLWIDTH, LCMAP_HIRAGANA, LCMapStringEx};
+use windows::Win32::Graphics::Dwm::{DWMWINDOWATTRIBUTE, DwmSetWindowAttribute};
 use windows::Win32::Graphics::Gdi::{
     CLEARTYPE_QUALITY, CLIP_DEFAULT_PRECIS, COLOR_GRAYTEXT, COLOR_WINDOW, COLOR_WINDOWTEXT,
-    CreateFontW, DEFAULT_CHARSET, FF_DONTCARE, FW_NORMAL, GetSysColor, GetSysColorBrush, HBRUSH,
-    HDC, HFONT, InvalidateRect, OUT_DEFAULT_PRECIS, SetBkMode, SetTextColor, TRANSPARENT,
+    CreateFontW, DEFAULT_CHARSET, FF_DONTCARE, FW_NORMAL, GetSysColor, HBRUSH, HDC, HFONT,
+    InvalidateRect, OUT_DEFAULT_PRECIS, SetBkMode, SetTextColor, TRANSPARENT,
 };
+use windows::Win32::Graphics::Gdi::{CreateSolidBrush, SetBkColor};
 use windows::Win32::System::Com::{
     CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx, CoTaskMemFree,
 };
 use windows::Win32::System::Diagnostics::Debug::MessageBeep;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::System::Registry::{HKEY_CURRENT_USER, RRF_RT_REG_DWORD, RegGetValueW};
 use windows::Win32::UI::Controls::{
     CDDS_ITEMPREPAINT, CDDS_PREPAINT, CDDS_SUBITEM, CDRF_DODEFAULT, CDRF_NEWFONT,
     CDRF_NOTIFYITEMDRAW, EM_SETCUEBANNER, ICC_LISTVIEW_CLASSES, INITCOMMONCONTROLSEX,
@@ -43,6 +46,10 @@ use windows::Win32::UI::Controls::{
     LVN_KEYDOWN, LVNI_SELECTED, LVS_EX_DOUBLEBUFFER, LVS_EX_FULLROWSELECT, LVS_NOCOLUMNHEADER,
     LVS_OWNERDATA, LVS_REPORT, LVS_SHOWSELALWAYS, NM_CUSTOMDRAW, NMHDR, NMLVCUSTOMDRAW,
     NMLVDISPINFOW, NMLVKEYDOWN, WC_LISTVIEWW,
+};
+use windows::Win32::UI::Controls::{
+    CDIS_FOCUS, CDIS_SELECTED, CDRF_NOTIFYSUBITEMDRAW, LVM_SETBKCOLOR, LVM_SETTEXTBKCOLOR,
+    LVM_SETTEXTCOLOR, NMCUSTOMDRAW_DRAW_STATE_FLAGS, SetWindowTheme,
 };
 use windows::Win32::UI::HiDpi::{
     DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, GetDpiForSystem, SetProcessDpiAwarenessContext,
@@ -65,6 +72,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     WNDCLASSEXW, WS_CAPTION, WS_CHILD, WS_EX_CLIENTEDGE, WS_EX_DLGMODALFRAME, WS_OVERLAPPED,
     WS_SYSMENU, WS_TABSTOP, WS_VISIBLE,
 };
+use windows::Win32::UI::WindowsAndMessaging::{WM_CTLCOLORBTN, WM_CTLCOLOREDIT};
 use windows::core::{HSTRING, PCWSTR, PWSTR, w};
 
 use super::msime::{self, Entry, NOUN};
@@ -316,6 +324,83 @@ pub fn run_import(install: &Path, source: Option<&Path>) -> i32 {
     }
 }
 
+/// The window's colours: the system's light ones, or dark ones when apps
+/// are set to dark (Settings > Personalization > Colors). `KARUKAN_THEME`
+/// = `dark` / `light` overrides it (for checking either look).
+#[derive(Clone, Copy)]
+struct Palette {
+    dark: bool,
+    bg: COLORREF,
+    field: COLORREF,
+    text: COLORREF,
+    dim: COLORREF,
+}
+
+fn apps_use_dark() -> bool {
+    match std::env::var("KARUKAN_THEME").as_deref() {
+        Ok("dark") => return true,
+        Ok("light") => return false,
+        _ => {}
+    }
+    let mut data = 1u32;
+    let mut size = 4u32;
+    let rc = unsafe {
+        RegGetValueW(
+            HKEY_CURRENT_USER,
+            w!("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize"),
+            w!("AppsUseLightTheme"),
+            RRF_RT_REG_DWORD,
+            None,
+            Some(&mut data as *mut u32 as *mut _),
+            Some(&mut size),
+        )
+    };
+    rc.is_ok() && data == 0
+}
+
+fn palette() -> Palette {
+    static P: std::sync::OnceLock<(bool, u32, u32, u32, u32)> = std::sync::OnceLock::new();
+    let &(dark, bg, field, text, dim) = P.get_or_init(|| {
+        if apps_use_dark() {
+            (true, 0x20_2020, 0x2c_2c2c, 0xf0_f0f0, 0x9a_9a9a)
+        } else {
+            unsafe {
+                (
+                    false,
+                    GetSysColor(COLOR_WINDOW),
+                    GetSysColor(COLOR_WINDOW),
+                    GetSysColor(COLOR_WINDOWTEXT),
+                    GetSysColor(COLOR_GRAYTEXT),
+                )
+            }
+        }
+    });
+    Palette {
+        dark,
+        bg: COLORREF(bg),
+        field: COLORREF(field),
+        text: COLORREF(text),
+        dim: COLORREF(dim),
+    }
+}
+
+thread_local! {
+    /// The background and field brushes, made once.
+    static BRUSHES: std::cell::Cell<Option<(HBRUSH, HBRUSH)>> = const { std::cell::Cell::new(None) };
+}
+
+fn brushes() -> (HBRUSH, HBRUSH) {
+    BRUSHES.with(|b| {
+        if let Some(v) = b.get() {
+            return v;
+        }
+        let p = palette();
+        let v = unsafe { (CreateSolidBrush(p.bg), CreateSolidBrush(p.field)) };
+        b.set(Some(v));
+        v
+    })
+}
+
 /// What the window holds.
 struct Ui {
     file: PathBuf,
@@ -546,37 +631,50 @@ impl Ui {
     }
 }
 
-/// The よみ column in grey, so the words stand out without a header (a
-/// selected row keeps the highlight's own colour).
+/// The よみ column in grey, so the words stand out without a header. A
+/// selected row keeps the highlight's own colour, except in the dark look,
+/// where Windows would paint it in the light theme's near-white: there it is
+/// drawn a step lighter than the background instead.
 fn custom_draw(cd: &mut NMLVCUSTOMDRAW) -> LRESULT {
     let stage = cd.nmcd.dwDrawStage;
-    if stage == CDDS_PREPAINT || stage == CDDS_ITEMPREPAINT {
+    if stage == CDDS_PREPAINT {
         return LRESULT(CDRF_NOTIFYITEMDRAW as isize);
     }
+    let p = palette();
+    let selected = unsafe {
+        SendMessageW(
+            cd.nmcd.hdr.hwndFrom,
+            LVM_GETITEMSTATE,
+            Some(WPARAM(cd.nmcd.dwItemSpec)),
+            Some(LPARAM(LVIS_SELECTED.0 as isize)),
+        )
+    }
+    .0 != 0;
+    let own_highlight = selected && p.dark;
+    if own_highlight {
+        cd.nmcd.uItemState =
+            NMCUSTOMDRAW_DRAW_STATE_FLAGS(cd.nmcd.uItemState.0 & !(CDIS_SELECTED.0 | CDIS_FOCUS.0));
+    }
+    if stage == CDDS_ITEMPREPAINT {
+        return LRESULT(CDRF_NOTIFYSUBITEMDRAW as isize);
+    }
     if stage.0 == CDDS_ITEMPREPAINT.0 | CDDS_SUBITEM.0 {
-        let selected = unsafe {
-            SendMessageW(
-                cd.nmcd.hdr.hwndFrom,
-                LVM_GETITEMSTATE,
-                Some(WPARAM(cd.nmcd.dwItemSpec)),
-                Some(LPARAM(LVIS_SELECTED.0 as isize)),
-            )
-        }
-        .0 != 0;
-        if selected {
+        if selected && !p.dark {
             return LRESULT(CDRF_DODEFAULT as isize);
         }
-        cd.clrText = COLORREF(unsafe {
-            GetSysColor(if cd.iSubItem == 1 {
-                COLOR_GRAYTEXT
-            } else {
-                COLOR_WINDOWTEXT
-            })
-        });
+        cd.clrText = if cd.iSubItem == 1 && !own_highlight {
+            p.dim
+        } else {
+            p.text
+        };
+        cd.clrTextBk = if own_highlight { SELECTED_DARK } else { p.bg };
         return LRESULT(CDRF_NEWFONT as isize);
     }
     LRESULT(CDRF_DODEFAULT as isize)
 }
+
+/// A selected row in the dark look.
+const SELECTED_DARK: COLORREF = COLORREF(0x46_4646);
 
 /// The text of row `row`, column `col`, copied into the list's buffer.
 fn display_info(info: &mut NMLVDISPINFOW) {
@@ -774,9 +872,17 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
             // the count, quiet grey on the window's own background
             let dc = HDC(wp.0 as *mut _);
             SetBkMode(dc, TRANSPARENT);
-            SetTextColor(dc, COLORREF(GetSysColor(COLOR_GRAYTEXT)));
-            LRESULT(GetSysColorBrush(COLOR_WINDOW).0 as isize)
+            SetTextColor(dc, palette().dim);
+            LRESULT(brushes().0.0 as isize)
         },
+        WM_CTLCOLOREDIT if palette().dark => unsafe {
+            let dc = HDC(wp.0 as *mut _);
+            let p = palette();
+            SetTextColor(dc, p.text);
+            SetBkColor(dc, p.field);
+            LRESULT(brushes().1.0 as isize)
+        },
+        WM_CTLCOLORBTN => LRESULT(brushes().0.0 as isize),
         WM_CLOSE => {
             unsafe {
                 let _ = DestroyWindow(hwnd);
@@ -814,7 +920,7 @@ pub fn run(install: &Path, reading: &str, surface: &str) -> i32 {
             lpfnWndProc: Some(wnd_proc),
             hInstance: module.into(),
             lpszClassName: class,
-            hbrBackground: HBRUSH((COLOR_WINDOW.0 + 1) as isize as *mut _),
+            hbrBackground: brushes().0,
             ..Default::default()
         };
         RegisterClassExW(&wc);
@@ -901,6 +1007,23 @@ pub fn run(install: &Path, reading: &str, surface: &str) -> i32 {
             );
             h
         };
+        let dark = palette().dark;
+        if dark {
+            // the title bar dark too (Windows 10 2004 and later read attribute 20)
+            let on = 1u32;
+            let _ = DwmSetWindowAttribute(
+                hwnd,
+                DWMWINDOWATTRIBUTE(20),
+                &on as *const u32 as *const _,
+                4,
+            );
+        }
+        // the dark look of each control: Windows' own dark themes
+        let theme = |h: HWND, name: PCWSTR| {
+            if dark {
+                let _ = SetWindowTheme(h, name, PCWSTR::null());
+            }
+        };
         let edit = WINDOW_STYLE(ES_AUTOHSCROLL as u32) | WS_TABSTOP;
         let cue = |h: HWND, text: PCWSTR| {
             SendMessageW(
@@ -920,6 +1043,7 @@ pub fn run(install: &Path, reading: &str, surface: &str) -> i32 {
             ID_SURFACE,
         );
         cue(s, w!("単語"));
+        theme(s, w!("DarkMode_CFD"));
         let r = child(
             WS_EX_CLIENTEDGE,
             w!("EDIT"),
@@ -929,7 +1053,8 @@ pub fn run(install: &Path, reading: &str, surface: &str) -> i32 {
             ID_READING,
         );
         cue(r, w!("よみ"));
-        child(
+        theme(r, w!("DarkMode_CFD"));
+        let ok = child(
             WINDOW_EX_STYLE(0),
             w!("BUTTON"),
             "登録",
@@ -937,6 +1062,7 @@ pub fn run(install: &Path, reading: &str, surface: &str) -> i32 {
             (W - M - BTN, y_reading, BTN, ROW),
             IDOK.0,
         );
+        theme(ok, w!("DarkMode_Explorer"));
         let list = child(
             WINDOW_EX_STYLE(0),
             WC_LISTVIEWW,
@@ -954,6 +1080,15 @@ pub fn run(install: &Path, reading: &str, surface: &str) -> i32 {
                 (LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER) as isize,
             )),
         );
+        if dark {
+            let p = palette();
+            for m in [LVM_SETBKCOLOR, LVM_SETTEXTBKCOLOR, LVM_SETTEXTCOLOR] {
+                let c = if m == LVM_SETTEXTCOLOR { p.text } else { p.bg };
+                SendMessageW(list, m, Some(WPARAM(0)), Some(LPARAM(c.0 as isize)));
+            }
+            // its scroll bar
+            theme(list, w!("DarkMode_CFD"));
+        }
         // no header: the columns are in the fields' order, 単語 then よみ
         let inner = W - 2 * M - 20; // the scroll bar's room
         for (i, (title, width)) in [("単語", inner * 11 / 20), ("よみ", inner * 9 / 20)]
@@ -982,6 +1117,7 @@ pub fn run(install: &Path, reading: &str, surface: &str) -> i32 {
             (M, y_bottom, BTN + 12, ROW),
             ID_IMPORT,
         );
+        theme(import, w!("DarkMode_Explorer"));
         let status = child(
             WINDOW_EX_STYLE(0),
             w!("STATIC"),

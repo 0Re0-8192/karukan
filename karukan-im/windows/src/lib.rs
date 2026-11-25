@@ -139,7 +139,7 @@ mod dll {
 }
 
 #[cfg(windows)]
-pub(crate) use dll::{dll_dir, dll_path};
+pub(crate) use dll::{dll_dir, dll_path, module};
 
 /// Test hook: a fresh text service object.
 #[cfg(windows)]

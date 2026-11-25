@@ -5,7 +5,7 @@
 use std::cell::{Cell, RefCell};
 
 use windows::Win32::Foundation::COLORREF;
-use windows::Win32::Foundation::{E_INVALIDARG, E_NOTIMPL, POINT, RECT};
+use windows::Win32::Foundation::{E_INVALIDARG, E_NOTIMPL, HWND, POINT, RECT};
 use windows::Win32::Graphics::Gdi::{
     BI_RGB, BITMAPINFO, BITMAPINFOHEADER, CLEARTYPE_QUALITY, CLIP_DEFAULT_PRECIS, CreateBitmap,
     CreateCompatibleDC, CreateDIBSection, CreateFontW, DEFAULT_CHARSET, DIB_RGB_COLORS, DT_CENTER,
@@ -30,6 +30,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
     TrackPopupMenuEx,
 };
 use windows::core::{BSTR, GUID, IUnknown, Interface, Ref, Result, implement, w};
+
+use windows::Win32::UI::WindowsAndMessaging::HMENU;
 
 use crate::guids::CLSID_KARUKAN;
 
@@ -211,6 +213,176 @@ fn menu_anchor(
     }
 }
 
+/// The right-click menu drawn dark: owner-drawn items on a dark background,
+/// owned by a hidden window of ours that draws them.
+mod dark_menu {
+    use std::cell::Cell;
+
+    use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, RECT, SIZE, WPARAM};
+    use windows::Win32::Graphics::Gdi::{
+        CreateFontIndirectW, CreateSolidBrush, DT_LEFT, DT_SINGLELINE, DT_VCENTER, DeleteObject,
+        DrawTextW, FillRect, GetDC, GetTextExtentPoint32W, HFONT, HGDIOBJ, ReleaseDC, SelectObject,
+        SetBkMode, SetTextColor, TRANSPARENT,
+    };
+    use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+    use windows::Win32::UI::Controls::{DRAWITEMSTRUCT, MEASUREITEMSTRUCT, ODS_SELECTED, ODT_MENU};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, HMENU, MENUINFO,
+        MF_OWNERDRAW, MIM_BACKGROUND, NONCLIENTMETRICSW, RegisterClassExW, SPI_GETNONCLIENTMETRICS,
+        SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SetMenuInfo, SystemParametersInfoW, WM_DRAWITEM,
+        WM_MEASUREITEM, WNDCLASSEXW, WS_EX_TOOLWINDOW, WS_POPUP,
+    };
+    use windows::core::PCWSTR;
+
+    use super::ID_WORD;
+
+    const BG: u32 = 0x2b_2b2b;
+    const HOT: u32 = 0x41_4141;
+    const TEXT: u32 = 0xf0_f0f0;
+    const LABEL: &str = "単語の登録";
+
+    thread_local! {
+        static OWNER: Cell<Option<HWND>> = const { Cell::new(None) };
+        static FONT: Cell<Option<HFONT>> = const { Cell::new(None) };
+    }
+
+    /// The menu font of the system, made once.
+    fn font() -> HFONT {
+        FONT.with(|f| {
+            if let Some(h) = f.get() {
+                return h;
+            }
+            let mut m = NONCLIENTMETRICSW {
+                cbSize: std::mem::size_of::<NONCLIENTMETRICSW>() as u32,
+                ..Default::default()
+            };
+            let h = unsafe {
+                let _ = SystemParametersInfoW(
+                    SPI_GETNONCLIENTMETRICS,
+                    m.cbSize,
+                    Some(&mut m as *mut _ as *mut _),
+                    SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
+                );
+                CreateFontIndirectW(&m.lfMenuFont)
+            };
+            f.set(Some(h));
+            h
+        })
+    }
+
+    fn label() -> Vec<u16> {
+        LABEL.encode_utf16().collect()
+    }
+
+    unsafe extern "system" fn proc_(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
+        unsafe {
+            match msg {
+                WM_MEASUREITEM => {
+                    let mi = &mut *(lp.0 as *mut MEASUREITEMSTRUCT);
+                    if mi.CtlType != ODT_MENU {
+                        return DefWindowProcW(hwnd, msg, wp, lp);
+                    }
+                    let dc = GetDC(Some(hwnd));
+                    let old = SelectObject(dc, HGDIOBJ(font().0));
+                    let mut sz = SIZE::default();
+                    let _ = GetTextExtentPoint32W(dc, &label(), &mut sz);
+                    SelectObject(dc, old);
+                    ReleaseDC(Some(hwnd), dc);
+                    // the room a themed menu gives a line: padded both ways
+                    mi.itemWidth = (sz.cx + sz.cy * 2) as u32;
+                    mi.itemHeight = (sz.cy * 2) as u32;
+                    LRESULT(1)
+                }
+                WM_DRAWITEM => {
+                    let di = &*(lp.0 as *const DRAWITEMSTRUCT);
+                    if di.CtlType != ODT_MENU {
+                        return DefWindowProcW(hwnd, msg, wp, lp);
+                    }
+                    let hot = (di.itemState.0 & ODS_SELECTED.0) != 0;
+                    let b = CreateSolidBrush(COLORREF(if hot { HOT } else { BG }));
+                    FillRect(di.hDC, &di.rcItem, b);
+                    let _ = DeleteObject(HGDIOBJ(b.0));
+                    let old = SelectObject(di.hDC, HGDIOBJ(font().0));
+                    SetBkMode(di.hDC, TRANSPARENT);
+                    SetTextColor(di.hDC, COLORREF(TEXT));
+                    let h = di.rcItem.bottom - di.rcItem.top;
+                    let mut r = RECT {
+                        left: di.rcItem.left + h / 2,
+                        ..di.rcItem
+                    };
+                    let mut text = label();
+                    DrawTextW(
+                        di.hDC,
+                        &mut text,
+                        &mut r,
+                        DT_LEFT | DT_SINGLELINE | DT_VCENTER,
+                    );
+                    SelectObject(di.hDC, old);
+                    LRESULT(1)
+                }
+                _ => DefWindowProcW(hwnd, msg, wp, lp),
+            }
+        }
+    }
+
+    /// The hidden window the menu belongs to, made once per thread.
+    fn owner() -> Option<HWND> {
+        if let Some(h) = OWNER.with(|o| o.get()) {
+            return Some(h);
+        }
+        unsafe {
+            let hinst = GetModuleHandleW(None).ok()?;
+            // one class per loaded copy of this code (an app can hold two)
+            let name: Vec<u16> = format!("KarukanMenuOwner_{:x}", proc_ as *const () as usize)
+                .encode_utf16()
+                .chain(Some(0))
+                .collect();
+            let wc = WNDCLASSEXW {
+                cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
+                lpfnWndProc: Some(proc_),
+                hInstance: hinst.into(),
+                lpszClassName: PCWSTR(name.as_ptr()),
+                ..Default::default()
+            };
+            RegisterClassExW(&wc);
+            let h = CreateWindowExW(
+                WS_EX_TOOLWINDOW,
+                PCWSTR(name.as_ptr()),
+                PCWSTR::null(),
+                WS_POPUP,
+                0,
+                0,
+                0,
+                0,
+                None,
+                None,
+                Some(hinst.into()),
+                None,
+            )
+            .ok()?;
+            OWNER.with(|o| o.set(Some(h)));
+            Some(h)
+        }
+    }
+
+    /// The menu and the window it belongs to.
+    pub fn build() -> Option<(HMENU, HWND)> {
+        let own = owner()?;
+        unsafe {
+            let menu = CreatePopupMenu().ok()?;
+            let info = MENUINFO {
+                cbSize: std::mem::size_of::<MENUINFO>() as u32,
+                fMask: MIM_BACKGROUND,
+                hbrBack: CreateSolidBrush(COLORREF(BG)),
+                ..Default::default()
+            };
+            let _ = SetMenuInfo(menu, &info);
+            let _ = AppendMenuW(menu, MF_OWNERDRAW, ID_WORD as usize, PCWSTR::null());
+            Some((menu, own))
+        }
+    }
+}
+
 impl ITfLangBarItem_Impl for ModeButton_Impl {
     fn GetInfo(&self, pinfo: *mut TF_LANGBARITEMINFO) -> Result<()> {
         if pinfo.is_null() {
@@ -258,11 +430,9 @@ impl ITfLangBarItemButton_Impl for ModeButton_Impl {
             (self.hooks.toggle)();
         } else if click == TF_LBI_CLK_RIGHT {
             unsafe {
-                let menu = CreatePopupMenu()?;
-                let _ = AppendMenuW(menu, MF_STRING, ID_WORD as usize, w!("単語の登録"));
                 // as Mozc does: the menu belongs to the app's focused window,
                 // ours only when there is none, and stays inside the work area
-                let owner = Some(GetFocus())
+                let app_owner = Some(GetFocus())
                     .filter(|h| !h.is_invalid())
                     .or_else(|| (self.hooks.owner)());
                 let area = prcarea.as_ref().copied().filter(|r| r.right > r.left);
@@ -277,14 +447,42 @@ impl ITfLangBarItemButton_Impl for ModeButton_Impl {
                     cbSize: std::mem::size_of::<TPMPARAMS>() as u32,
                     rcExclude: area.unwrap_or_default(),
                 };
-                let picked = TrackPopupMenuEx(
-                    menu,
-                    (TPM_NONOTIFY | TPM_RETURNCMD | TPM_LEFTBUTTON | align).0,
-                    x,
-                    y,
-                    owner.unwrap_or_default(),
-                    area.map(|_| &params as *const TPMPARAMS),
-                );
+                let track = |menu: HMENU, owner: Option<HWND>| {
+                    TrackPopupMenuEx(
+                        menu,
+                        (TPM_NONOTIFY | TPM_RETURNCMD | TPM_LEFTBUTTON | align).0,
+                        x,
+                        y,
+                        owner.unwrap_or_default(),
+                        area.map(|_| &params as *const TPMPARAMS),
+                    )
+                };
+                // dark like the taskbar's own menus when the taskbar is dark:
+                // drawn by our own window, which the menu then belongs to (the
+                // app's window is left alone)
+                let mut picked = windows::core::BOOL(0);
+                let mut owner = app_owner;
+                let mut shown = false;
+                if taskbar_is_dark()
+                    && let Some((menu, own)) = dark_menu::build()
+                {
+                    let t0 = std::time::Instant::now();
+                    picked = track(menu, Some(own));
+                    let _ = DestroyMenu(menu);
+                    // nothing comes back at once only when it did not open
+                    shown = picked.0 != 0 || t0.elapsed() > std::time::Duration::from_millis(150);
+                    owner = Some(own);
+                    if !shown {
+                        log("dark menu did not open: the plain one");
+                    }
+                }
+                if !shown {
+                    let menu = CreatePopupMenu()?;
+                    let _ = AppendMenuW(menu, MF_STRING, ID_WORD as usize, w!("単語の登録"));
+                    owner = app_owner;
+                    picked = track(menu, owner);
+                    let _ = DestroyMenu(menu);
+                }
                 log(&format!(
                     "menu area={area:?} work={work:?} at ({x}, {y}) align={:#x}",
                     align.0
@@ -295,7 +493,6 @@ impl ITfLangBarItemButton_Impl for ModeButton_Impl {
                     owner.map(|h| h.0),
                     picked.0
                 ));
-                let _ = DestroyMenu(menu);
                 if picked.0 as u32 == ID_WORD {
                     (self.hooks.register_word)();
                 }

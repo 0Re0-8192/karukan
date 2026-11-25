@@ -429,12 +429,121 @@ fn utf16_offset(text: &str, scalar_off: usize) -> i32 {
 )]
 pub struct TextService {
     state: Rc<RefCell<State>>,
+    /// A newer copy of this text service (a `karukan_tsf_impl_<stamp>.dll`
+    /// installed after this one was loaded), running in this one's place
+    /// since `swap_to`: TSF still holds this object, which forwards it the
+    /// one call left to come, Deactivate.
+    delegate: RefCell<Option<ITfTextInputProcessorEx>>,
+    /// ActivateEx's flags, for the copy that takes over
+    flags: std::cell::Cell<u32>,
+    /// When `newer_impl` was last looked for (it reads the folder)
+    looked: std::cell::Cell<Option<Instant>>,
+    swap_posted: std::cell::Cell<bool>,
 }
 
 impl TextService {
     pub fn new() -> Self {
         TextService {
             state: Rc::new(RefCell::new(State::new())),
+            delegate: RefCell::new(None),
+            flags: std::cell::Cell::new(0),
+            looked: std::cell::Cell::new(None),
+            swap_posted: std::cell::Cell::new(false),
+        }
+    }
+}
+
+/// Implementation files this process could not load or activate: never
+/// tried again, or every focus change would tear down and set up again.
+static FAILED_IMPLS: std::sync::Mutex<Vec<PathBuf>> = std::sync::Mutex::new(Vec::new());
+
+/// The IME's on/off state a copy that takes over starts in (set by the copy
+/// it replaces through `KarukanTsfSetInitialOpen`; on when unset).
+static INITIAL_OPEN: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(2);
+
+/// Called by the copy being replaced, before ActivateEx: start in its state.
+#[unsafe(no_mangle)]
+extern "system" fn KarukanTsfSetInitialOpen(open: BOOL) {
+    INITIAL_OPEN.store(open.as_bool() as u8, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// This DLL's own file name, lowercased.
+fn own_file_name() -> Option<String> {
+    use windows::Win32::System::LibraryLoader::GetModuleFileNameW;
+    let mut buf = [0u16; 1024];
+    let n = unsafe { GetModuleFileNameW(Some(crate::module()), &mut buf) } as usize;
+    (n > 0 && n < buf.len()).then(|| {
+        let p = PathBuf::from(String::from_utf16_lossy(&buf[..n]));
+        p.file_name()
+            .map(|f| f.to_string_lossy().to_ascii_lowercase())
+            .unwrap_or_default()
+    })
+}
+
+/// The newest `karukan_tsf_impl*.dll` beside this one when it is newer than
+/// this one (the names sort by their build stamp, as the loader picks them).
+/// Only an implementation file looks: a DLL loaded under another name (a
+/// test, a development build) never swaps.
+fn newer_impl() -> Option<PathBuf> {
+    const PREFIX: &str = "karukan_tsf_impl";
+    let own = own_file_name()?;
+    if !own.starts_with(PREFIX) {
+        return None;
+    }
+    let newest = std::fs::read_dir(crate::dll_dir()?)
+        .ok()?
+        .flatten()
+        .map(|e| e.path())
+        .filter_map(|p| {
+            let n = p.file_name()?.to_string_lossy().to_ascii_lowercase();
+            (n.starts_with(PREFIX) && n.ends_with(".dll")).then_some((n, p))
+        })
+        .max_by(|a, b| a.0.cmp(&b.0))?;
+    (newest.0 > own).then_some(newest.1)
+}
+
+/// Load `path` and make its text service.
+fn create_text_service(path: &std::path::Path) -> Result<ITfTextInputProcessorEx> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows::Win32::System::Com::IClassFactory;
+    use windows::Win32::System::LibraryLoader::{
+        GetProcAddress, LOAD_WITH_ALTERED_SEARCH_PATH, LoadLibraryExW,
+    };
+    type GetClassObject = unsafe extern "system" fn(
+        *const GUID,
+        *const GUID,
+        *mut *mut core::ffi::c_void,
+    ) -> windows::core::HRESULT;
+    let w: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+    unsafe {
+        // never freed: TSF may still hold objects of any copy
+        let m = LoadLibraryExW(
+            windows::core::PCWSTR(w.as_ptr()),
+            None,
+            LOAD_WITH_ALTERED_SEARCH_PATH,
+        )?;
+        let f = GetProcAddress(m, windows::core::s!("DllGetClassObject")).ok_or(E_FAIL)?;
+        let get: GetClassObject = std::mem::transmute(f);
+        let mut p = std::ptr::null_mut();
+        get(&crate::guids::CLSID_KARUKAN, &IClassFactory::IID, &mut p).ok()?;
+        let cf = IClassFactory::from_raw(p);
+        let tip: ITfTextInputProcessorEx = cf.CreateInstance(None)?;
+        Ok(tip)
+    }
+}
+
+/// Tell the copy in `path` (already loaded) the on/off state to start in.
+fn pass_open_state(path: &std::path::Path, open: bool) {
+    use std::os::windows::ffi::OsStrExt;
+    use windows::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
+    let w: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+    unsafe {
+        let Ok(m) = GetModuleHandleW(windows::core::PCWSTR(w.as_ptr())) else {
+            return;
+        };
+        if let Some(f) = GetProcAddress(m, windows::core::s!("KarukanTsfSetInitialOpen")) {
+            let set: unsafe extern "system" fn(BOOL) = std::mem::transmute(f);
+            set(BOOL::from(open));
         }
     }
 }
@@ -700,6 +809,17 @@ fn text_anchor(state: &Rc<RefCell<State>>, ec: u32, ctx: &ITfContext) -> Option<
         // rectangle. Either way the window must not fall back on wherever it last
         // was, which can be another field or another app.
         if got.is_ok() && rc.bottom > rc.top && !(rc.left == 0 && rc.top == 0) {
+            // beside the app's own caret: an app that answers with another
+            // field's position (seen once in an Electron app with several
+            // panes) shows up as the two far apart
+            let caret = caret_anchor(view.GetWnd().ok());
+            diag(&format!(
+                "anchor text=({},{},{}) caret={:?}",
+                rc.left,
+                rc.top,
+                rc.bottom,
+                caret.map(|a| (a.x, a.top, a.bottom))
+            ));
             return Some((
                 Anchor {
                     x: rc.left,
@@ -1054,7 +1174,8 @@ impl TextService_Impl {
             st.thread_mgr = Some(tm);
             st.atom_input = a_in;
             st.atom_converted = a_cv;
-            st.open = true;
+            // on, unless the copy this one replaces was off
+            st.open = INITIAL_OPEN.swap(2, std::sync::atomic::Ordering::Relaxed) != 0;
         }
         prewarm_shared();
         let state = self.state.clone();
@@ -1066,7 +1187,88 @@ impl TextService_Impl {
         if let Some(tm) = tm {
             self.add_mode_button(&tm);
         }
+        diag(&format!(
+            "activated {}",
+            own_file_name().unwrap_or_default()
+        ));
         Ok(())
+    }
+
+    /// Look (at most every 2 s) for a newer implementation beside this one,
+    /// and if there is one, have the message loop swap to it.
+    fn look_for_update(&self) {
+        if self.delegate.borrow().is_some() || self.swap_posted.get() {
+            return;
+        }
+        let now = Instant::now();
+        if self
+            .looked
+            .get()
+            .is_some_and(|t| now.duration_since(t) < Duration::from_secs(2))
+        {
+            return;
+        }
+        self.looked.set(Some(now));
+        let Some(target) = newer_impl() else { return };
+        if FAILED_IMPLS
+            .lock()
+            .map(|f| f.contains(&target))
+            .unwrap_or(true)
+        {
+            return;
+        }
+        let me = self.to_object();
+        let posted = cand::post_task(Box::new(move || me.swap_to(&target)));
+        self.swap_posted.set(posted);
+    }
+
+    /// Hand this thread over to the copy in `target`: this one tears down,
+    /// that one activates with the same thread manager, client id and on/off
+    /// state. Only between words; a composition waits for the next look.
+    fn swap_to(&self, target: &std::path::Path) {
+        self.swap_posted.set(false);
+        if self.delegate.borrow().is_some() {
+            return;
+        }
+        let (tm, tid, open) = {
+            let st = self.state.borrow();
+            if st.has_preedit || st.composition.is_some() {
+                return;
+            }
+            let Some(tm) = st.thread_mgr.clone() else {
+                return;
+            };
+            (tm, st.tid, st.open)
+        };
+        let failed = |why: String| {
+            diag(&format!("swap to {} failed: {why}", target.display()));
+            if let Ok(mut f) = FAILED_IMPLS.lock() {
+                f.push(target.to_path_buf());
+            }
+        };
+        let tip = match create_text_service(target) {
+            Ok(t) => t,
+            Err(e) => return failed(format!("{e:?}")),
+        };
+        pass_open_state(target, open);
+        self.teardown();
+        match unsafe { tip.ActivateEx(&tm, tid, self.flags.get()) } {
+            Ok(()) => {
+                diag(&format!(
+                    "swapped {} -> {}",
+                    own_file_name().unwrap_or_default(),
+                    target.display()
+                ));
+                *self.delegate.borrow_mut() = Some(tip);
+            }
+            Err(e) => {
+                failed(format!("ActivateEx {e:?}"));
+                // back to this copy, as it was
+                let _ = self.activate(Some(&tm), tid);
+                self.state.borrow_mut().open = open;
+                notify_mode(&self.state);
+            }
+        }
     }
 
     /// The taskbar's あ / A button: left click toggles the IME, right click
@@ -1100,7 +1302,7 @@ impl TextService_Impl {
         if added.is_ok() {
             self.state.borrow_mut().mode_button = Some((button, mgr));
         } else {
-            dbg_log("langbar AddItem failed");
+            dbg_log(&format!("langbar AddItem failed: {added:?}"));
         }
     }
 
@@ -1141,6 +1343,10 @@ impl TextService_Impl {
     fn handle_key(&self, pic: Option<&ITfContext>, wparam: WPARAM, lparam: LPARAM) -> bool {
         let vk = wparam.0 as u32;
         let Some(ctx) = pic else { return false };
+        if !self.state.borrow().has_preedit {
+            // between words: a newer copy takes over from the next key on
+            self.look_for_update();
+        }
         self.state.borrow_mut().context = Some(ctx.clone());
 
         // --- IME on/off keys
@@ -1318,6 +1524,18 @@ impl ITfTextInputProcessor_Impl for TextService_Impl {
         self.activate(ptim.as_ref(), tid)
     }
     fn Deactivate(&self) -> Result<()> {
+        if let Some(d) = self.delegate.borrow_mut().take() {
+            return unsafe { d.Deactivate() };
+        }
+        self.teardown();
+        Ok(())
+    }
+}
+
+impl TextService_Impl {
+    /// What Deactivate undoes: the key sink, the composition, the server
+    /// connection, the taskbar button, the candidate window.
+    fn teardown(&self) {
         guard((), || self.flush());
         let tm = self.state.borrow().thread_mgr.clone();
         let tid = self.state.borrow().tid;
@@ -1340,12 +1558,15 @@ impl ITfTextInputProcessor_Impl for TextService_Impl {
         }
         cand::set_on_pick(None);
         cand::destroy();
-        Ok(())
     }
 }
 
 impl ITfTextInputProcessorEx_Impl for TextService_Impl {
-    fn ActivateEx(&self, ptim: Ref<ITfThreadMgr>, tid: u32, _flags: u32) -> Result<()> {
+    fn ActivateEx(&self, ptim: Ref<ITfThreadMgr>, tid: u32, flags: u32) -> Result<()> {
+        if let Some(d) = self.delegate.borrow_mut().take() {
+            let _ = unsafe { d.Deactivate() };
+        }
+        self.flags.set(flags);
         self.activate(ptim.as_ref(), tid)
     }
 }
@@ -1354,6 +1575,8 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
     fn OnSetFocus(&self, foreground: BOOL) -> Result<()> {
         if !foreground.as_bool() {
             guard((), || self.flush());
+        } else {
+            guard((), || self.look_for_update());
         }
         Ok(())
     }
