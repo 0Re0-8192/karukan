@@ -78,7 +78,16 @@ impl InputMethodEngine {
             let reading = full_reading;
             let mut all_candidates = self.lookup_learning_suggestions(&reading);
             append_candidates_dedup(&mut all_candidates, self.lookup_dict_candidates(&reading));
-            append_candidates_dedup(&mut all_candidates, self.lookup_rewriter_variants(&reading));
+            // The rewriter's variants are of the settled reading alone: with a
+            // romaji tail still being typed (は + `t`, heading for はて…) they
+            // answer something nobody is typing — 齒, ㇵ and a row of hentaigana
+            // for は.
+            if self.input_buf.pending().is_empty() {
+                append_candidates_dedup(
+                    &mut all_candidates,
+                    self.lookup_rewriter_variants(&reading),
+                );
+            }
             let aux = self.format_aux_composing();
             if all_candidates.is_empty() {
                 self.shown_suggestions = CandidateList::default();

@@ -286,3 +286,25 @@ fn an_n_left_behind_by_a_shift_word_settles_too() {
     let r = engine.process_key(&press_key(Keysym::RETURN));
     assert_eq!(commit_of(&r).as_deref(), Some("かんA"));
 }
+
+#[test]
+fn a_pending_tail_suggests_no_variants_of_the_kana_before_it() {
+    // は + `t` is heading for はた/はて/…: は's symbol and hentaigana variants
+    // answer nothing being typed
+    let mut engine = InputMethodEngine::new();
+    engine.converters.kanji = None;
+    send(&mut engine, "ha");
+    send(&mut engine, "t");
+    let shown: Vec<String> = engine
+        .shown_suggestions
+        .candidates()
+        .iter()
+        .map(|c| c.text.clone())
+        .collect();
+    assert!(
+        !shown
+            .iter()
+            .any(|t| t.chars().any(|c| ('\u{1b000}'..='\u{1b16f}').contains(&c))),
+        "{shown:?}"
+    );
+}
