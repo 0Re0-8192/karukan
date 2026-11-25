@@ -631,10 +631,16 @@ impl<B: Backend> Bridge<B> {
             }
         }
         let amended = if composition_reply {
-            let settled = inp
-                .as_ref()
-                .and_then(|i| i.command.as_ref())
-                .is_some_and(|c| c.ty == input::SC_STOP_KEY_TOGGLING);
+            // The last kana is settled once Gboard stops the toggling — a second after a tap — or
+            // at once when the key cannot toggle (a flick, a deletion).
+            let settled = inp.as_ref().is_some_and(|i| match i.ty {
+                input::SEND_COMMAND => i
+                    .command
+                    .as_ref()
+                    .is_some_and(|c| c.ty == input::SC_STOP_KEY_TOGGLING),
+                input::SEND_KEY => !i.key.as_ref().is_some_and(input::may_toggle),
+                _ => false,
+            });
             self.follow_reply(mozc_reply, settled)
         } else {
             None

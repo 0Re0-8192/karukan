@@ -210,6 +210,17 @@ pub fn is_qwerty_romaji_table(t: u32) -> bool {
     t == 0 || t == 20
 }
 
+/// A key of the 12-key keyboard that Mozc may still toggle: a tap on a key sends the key's digit
+/// (か is `2`), and the next tap on it changes the kana; ゛゜小 is `*`, 、。?! is `#`. A flick sends
+/// another character, and its kana is settled at once (seen on Gboard 18.4).
+pub fn may_toggle(k: &Key) -> bool {
+    k.special.is_none_or(|s| s == 0)
+        && k
+            .key_code
+            .and_then(char::from_u32)
+            .is_some_and(|c| c.is_ascii_digit() || c == '*' || c == '#')
+}
+
 /// A plain printable ASCII key that starts a romaji composition.
 pub fn is_romaji_start(k: &Key) -> bool {
     if k.special.is_some_and(|s| s != 0) {

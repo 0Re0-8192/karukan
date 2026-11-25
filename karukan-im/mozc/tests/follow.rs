@@ -100,6 +100,31 @@ fn kana_key(kana: &str) -> Vec<u8> {
     w.0
 }
 
+/// A tap on a key of the 12-key keyboard: Gboard sends the key's digit.
+fn tap_key(digit: char) -> Vec<u8> {
+    let mut w = W::new();
+    w.message(1, |i| {
+        i.uint(1, 3);
+        i.uint(2, 5);
+        i.message(3, |k| k.uint(1, digit as u64));
+        i.message(6, |c| c.string(1, "前の文"));
+    });
+    w.0
+}
+
+/// One tap that Mozc composes into `preedit`: the reply as amended.
+fn tap(
+    b: &mut Bridge<Fake>,
+    digit: char,
+    preedit: &str,
+    cands: &[(i64, &str)],
+) -> Option<Vec<u8>> {
+    let key = tap_key(digit);
+    assert!(b.handle(&key).is_none(), "Mozc composes the kana");
+    assert!(b.shadow_revert(&key).is_none());
+    b.observe(&key, &mozc_reply(&[(preedit, false)], cands, false))
+}
+
 fn cmd_cmd(ty: u32, id: Option<i64>) -> Vec<u8> {
     let mut w = W::new();
     w.message(1, |i| {
@@ -453,21 +478,30 @@ fn enter_key() -> Vec<u8> {
 }
 
 #[test]
-fn the_live_conversion_leads_and_shows_in_the_preedit_once_settled() {
+fn a_tap_waits_for_the_toggle_to_stop() {
     let mut b = bridge();
-    flick(&mut b, "あ", "あ", &[]);
-    // The kana may still toggle: Mozc's kana stays in the preedit.
-    let r = flick(&mut b, "め", "あめ", &[(0, "飴")]).unwrap();
+    tap(&mut b, '1', "あ", &[]);
+    // A tapped kana may still toggle: Mozc's kana stays in the preedit.
+    let r = tap(&mut b, '7', "あめ", &[(0, "飴")]).unwrap();
     assert_eq!(preedit(&r), "あめ");
     assert_eq!(texts(&r), ["雨", "アメリカから", "飴"]);
     // Settled: the preedit shows the conversion, as a QWERTY composition does.
     let r = settle(&mut b, "あめ", &[(0, "飴")]).unwrap();
     assert_eq!(preedit(&r), "雨");
-    // The next kana joins the conversion shown so far until it settles too.
-    let r = flick(&mut b, "が", "あめが", &[]).unwrap();
+    // The next tapped kana joins the conversion shown so far until it settles too.
+    let r = tap(&mut b, '2', "あめが", &[]).unwrap();
     assert_eq!(preedit(&r), "雨が");
     let r = settle(&mut b, "あめが", &[]).unwrap();
     assert_eq!(preedit(&r), "雨が");
+}
+
+#[test]
+fn a_flick_is_settled_at_once() {
+    let mut b = bridge();
+    tap(&mut b, '1', "あ", &[]);
+    // A flick cannot toggle: no wait for Gboard's stop-toggling.
+    let r = flick(&mut b, "め", "あめ", &[]).unwrap();
+    assert_eq!(preedit(&r), "雨");
 }
 
 #[test]
