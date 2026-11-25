@@ -102,3 +102,16 @@ fn function_keys_ignored_when_empty() {
     let r = engine.process_key(&key(Keysym::F7));
     assert!(!r.consumed);
 }
+
+#[test]
+fn a_last_n_settles_into_n_kana_for_the_script_keys() {
+    let mut engine = InputMethodEngine::new();
+    type_str(&mut engine, "kan");
+    engine.process_key(&key(Keysym::F7));
+    assert_eq!(engine.preedit().unwrap().text(), "カン");
+    engine.process_key(&key(Keysym::F6));
+    assert_eq!(engine.preedit().unwrap().text(), "かん");
+    // F10 is the keys as typed
+    engine.process_key(&key(Keysym::F10));
+    assert_eq!(engine.preedit().unwrap().text(), "kan");
+}

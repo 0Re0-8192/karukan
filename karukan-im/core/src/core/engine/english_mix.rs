@@ -222,11 +222,7 @@ impl InputMethodEngine {
     /// be kana. A last lone `n` counts as ん here: inside a longer word
     /// (`kensaku`) it is one, so `ken` must not pass for an English word.
     fn kana_of(&self, run: &str) -> Option<String> {
-        let k = self.converters.romaji.convert_flush(run);
-        let k = match k.strip_suffix('n') {
-            Some(head) => format!("{head}ん"),
-            None => k,
-        };
+        let k = self.converters.romaji.convert_settle(run);
         (!k.is_empty() && k.chars().all(|c| !c.is_ascii())).then_some(k)
     }
 
@@ -305,7 +301,7 @@ impl InputMethodEngine {
         let raw = self.raw_keys.clone();
         // Edits around the keystrokes (cursor moves, mid-buffer inserts)
         // leave raw_keys stale; only trust it when it reproduces the reading.
-        if !with_decimal_points(self.converters.romaji.convert_flush(&raw))
+        if !with_decimal_points(self.converters.romaji.convert_settle(&raw))
             .eq_ignore_ascii_case(reading)
         {
             return None;
@@ -335,7 +331,7 @@ impl InputMethodEngine {
         {
             return None;
         }
-        if !with_decimal_points(self.converters.romaji.convert_flush(&self.raw_keys))
+        if !with_decimal_points(self.converters.romaji.convert_settle(&self.raw_keys))
             .eq_ignore_ascii_case(reading)
         {
             return None;
@@ -354,7 +350,7 @@ impl InputMethodEngine {
         }
         if self.mode.current() == InputMode::Hiragana {
             let romaji = &self.converters.romaji;
-            if !with_decimal_points(romaji.convert_flush(&self.raw_keys))
+            if !with_decimal_points(romaji.convert_settle(&self.raw_keys))
                 .eq_ignore_ascii_case(&self.input_buf.settled_reading(romaji))
             {
                 return String::new();
@@ -372,7 +368,15 @@ impl InputMethodEngine {
         {
             return keys;
         }
-        with_decimal_points(self.converters.romaji.convert_flush(&keys))
+        // While typing a last `n` may still become な; once the composition
+        // is converted it has settled into ん, like the reading behind the list.
+        let romaji = &self.converters.romaji;
+        let kana = if matches!(self.state, InputState::Composing { .. }) {
+            romaji.convert_flush(&keys)
+        } else {
+            romaji.convert_settle(&keys)
+        };
+        with_decimal_points(kana)
     }
 
     /// Live conversion text with English words restored, for a model answer
@@ -392,7 +396,7 @@ impl InputMethodEngine {
             return self.learned_word_as_typed(&pending);
         }
         let romaji = &self.converters.romaji;
-        if !with_decimal_points(romaji.convert_flush(&self.raw_keys))
+        if !with_decimal_points(romaji.convert_settle(&self.raw_keys))
             .eq_ignore_ascii_case(&self.input_buf.settled_reading(romaji))
         {
             return None;
@@ -442,7 +446,7 @@ impl InputMethodEngine {
             return None;
         }
         let romaji = &self.converters.romaji;
-        with_decimal_points(romaji.convert_flush(raw))
+        with_decimal_points(romaji.convert_settle(raw))
             .eq_ignore_ascii_case(&self.input_buf.settled_reading(romaji))
             .then(|| raw.clone())
     }

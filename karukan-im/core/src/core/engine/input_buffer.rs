@@ -226,7 +226,7 @@ impl InputBuffer {
                 Element::Romaji(ch) => run.push(*ch),
                 Element::Converted(ch) | Element::Settled(ch) => {
                     if !run.is_empty() {
-                        reading.push_str(&romaji.convert_flush(&run));
+                        reading.push_str(&romaji.convert_settle(&run));
                         run.clear();
                     }
                     reading.push(*ch);
@@ -234,9 +234,29 @@ impl InputBuffer {
             }
         }
         if !run.is_empty() {
-            reading.push_str(&romaji.convert_flush(&run));
+            reading.push_str(&romaji.convert_settle(&run));
         }
         reading
+    }
+
+    /// Whether settling changes what the Romaji keystrokes read as: a lone
+    /// `n` at the end of a run (`kan`, or the `n` left behind by a Shift
+    /// word in `kanA`) becomes ん, where the live view showed it as `n`.
+    pub fn settles_differently(&self, romaji: &RomajiConverter) -> bool {
+        let mut run = String::new();
+        let differs = |run: &str| romaji.convert_settle(run) != romaji.convert_flush(run);
+        for element in &self.elements {
+            match element {
+                Element::Romaji(ch) => run.push(*ch),
+                _ => {
+                    if !run.is_empty() && differs(&run) {
+                        return true;
+                    }
+                    run.clear();
+                }
+            }
+        }
+        !run.is_empty() && differs(&run)
     }
 
     /// Settle all Romaji keystrokes in place (`ltu` → っ; unmatched
@@ -359,7 +379,7 @@ fn flush_run(out: &mut Vec<Element>, run: &mut String, romaji: &RomajiConverter)
     if run.is_empty() {
         return;
     }
-    out.extend(romaji.convert_flush(run).chars().map(Element::Converted));
+    out.extend(romaji.convert_settle(run).chars().map(Element::Converted));
     run.clear();
 }
 

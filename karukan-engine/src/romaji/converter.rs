@@ -140,6 +140,24 @@ impl RomajiConverter {
         self.width.apply_str(&text)
     }
 
+    /// [`Self::convert_flush`] for keystrokes that are final — the
+    /// composition is converted, committed, or the caret leaves it: a last
+    /// lone `n` is ん, since no vowel can follow it any more (`kan` + Space
+    /// is かん, as in every IME). While typing, `n` stays `n` (`kan` may
+    /// still become かな), which is why the two differ.
+    pub fn convert_settle(&self, raw: &str) -> String {
+        if self.chain.is_some() {
+            return raw.to_string();
+        }
+        let Converted { mut text, pending } = self.convert(raw);
+        if pending == "n" {
+            text.push('ん');
+        } else {
+            text.push_str(&self.flush_pending(&pending));
+        }
+        self.width.apply_str(&text)
+    }
+
     /// Whether `ch` can begin a conversion rule (`k`, `y`, `n` — a later
     /// keystroke could still complete a conversion with it; `1` cannot).
     pub fn starts_rule(&self, ch: char) -> bool {
@@ -392,6 +410,20 @@ mod tests {
         assert_eq!(c.flush_pending("ltu"), "っ");
         assert_eq!(c.convert_flush("k"), "k");
         assert_eq!(c.convert_flush("kan"), "かn");
+    }
+
+    #[test]
+    fn settling_turns_a_last_lone_n_into_n_kana() {
+        let c = RomajiConverter::new();
+        assert_eq!(c.convert_settle("kan"), "かん");
+        assert_eq!(c.convert_settle("n"), "ん");
+        assert_eq!(c.convert_settle("kann"), "かん");
+        assert_eq!(c.convert_settle("sannpo"), "さんぽ");
+        assert_eq!(c.convert_settle("kanp"), "かんp");
+        // only a lone n: other leftovers pass through as before
+        assert_eq!(c.convert_settle("k"), "k");
+        assert_eq!(c.convert_settle("ky"), "ky");
+        assert_eq!(c.convert_settle("ltu"), "っ");
     }
 
     #[test]

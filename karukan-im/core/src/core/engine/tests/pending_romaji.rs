@@ -220,3 +220,69 @@ fn test_stranded_consonant_stays_in_place_live() {
     send(&mut engine, "y1a");
     assert_eq!(preedit_text(&engine), "y1あ");
 }
+
+fn commit_of(result: &EngineResult) -> Option<String> {
+    result.actions.iter().find_map(|a| match a {
+        EngineAction::Commit(t) => Some(t.clone()),
+        _ => None,
+    })
+}
+
+#[test]
+fn enter_commits_a_last_n_as_n_kana() {
+    let mut engine = InputMethodEngine::new();
+    engine.converters.kanji = None;
+    send(&mut engine, "hon");
+    assert_eq!(preedit_text(&engine), "ほn");
+    let r = engine.process_key(&press_key(Keysym::RETURN));
+    assert_eq!(commit_of(&r).as_deref(), Some("ほん"));
+}
+
+#[test]
+fn enter_reconverts_a_live_text_that_ended_on_n() {
+    // Live conversion showed 佐藤さn; what is committed is the conversion
+    // of the settled reading, not that text with ん pasted on.
+    let mut engine = InputMethodEngine::new();
+    engine.converters.kanji = None;
+    engine.live.enabled = true;
+    seed_model_cache(&mut engine, "サトウサ", "", &["佐藤さ"]);
+    seed_model_cache(&mut engine, "サトウサン", "", &["佐藤さん"]);
+    send(&mut engine, "satousan");
+    assert_eq!(preedit_text(&engine), "佐藤さn");
+    let r = engine.process_key(&press_key(Keysym::RETURN));
+    assert_eq!(commit_of(&r).as_deref(), Some("佐藤さん"));
+}
+
+#[test]
+fn space_converts_the_reading_with_a_last_n_as_n_kana() {
+    let mut engine = InputMethodEngine::new();
+    engine.converters.kanji = None;
+    engine.live.enabled = true;
+    seed_model_cache(&mut engine, "カ", "", &["加"]);
+    seed_model_cache(&mut engine, "カン", "", &["缶"]);
+    send(&mut engine, "kan");
+    send(&mut engine, "␣");
+    let list: Vec<String> = engine
+        .state()
+        .candidates()
+        .unwrap()
+        .candidates()
+        .iter()
+        .map(|c| c.text.clone())
+        .collect();
+    assert_eq!(list.first().map(String::as_str), Some("缶"), "{list:?}");
+    // (the keys as typed, `kan`, are a candidate of their own)
+    assert!(
+        !list.iter().any(|t| t.ends_with('n') && !t.is_ascii()),
+        "{list:?}"
+    );
+}
+
+#[test]
+fn an_n_left_behind_by_a_shift_word_settles_too() {
+    let mut engine = InputMethodEngine::new();
+    engine.converters.kanji = None;
+    send(&mut engine, "kanA");
+    let r = engine.process_key(&press_key(Keysym::RETURN));
+    assert_eq!(commit_of(&r).as_deref(), Some("かんA"));
+}

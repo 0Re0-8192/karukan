@@ -69,7 +69,7 @@ impl InputMethodEngine {
         }
         let romaji = &self.converters.romaji;
         let target = self.input_buf.settled_reading(romaji);
-        let spell = |k: &str| super::english_mix::with_decimal_points(romaji.convert_flush(k));
+        let spell = |k: &str| super::english_mix::with_decimal_points(romaji.convert_settle(k));
         if spell(&self.raw_keys).eq_ignore_ascii_case(&target) {
             return;
         }

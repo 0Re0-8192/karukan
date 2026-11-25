@@ -154,7 +154,13 @@ impl InputMethodEngine {
 
         // Snapshot the live-conversion text before clearing it, so the
         // displayed candidate survives even if re-inference diverges.
-        let prev_suggest_text = self.live_text_with_pending();
+        // (Not when the tail settles into something else: `加n` is not an
+        // answer for かん.)
+        let prev_suggest_text = if self.pending_settles_differently() {
+            String::new()
+        } else {
+            self.live_text_with_pending()
+        };
         self.live.shown = false;
 
         if reading.is_empty() {

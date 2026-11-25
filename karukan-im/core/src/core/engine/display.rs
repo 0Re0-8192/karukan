@@ -67,6 +67,14 @@ impl InputMethodEngine {
     /// pending romaji tail (早稲田 + d → 早稲田d). Empty when there is no
     /// live result or the cursor is away from the end (the display fell
     /// back to kana there). Call before `settle_romaji` empties the tail.
+    /// Whether settling the composition changes its unfired keystrokes —
+    /// a lone `n` that becomes ん. The live text then shows a reading that
+    /// is no longer the one converted or committed (`佐藤さn` for
+    /// さとうさん), so it has to be converted again rather than reused.
+    pub(super) fn pending_settles_differently(&self) -> bool {
+        self.input_buf.settles_differently(&self.converters.romaji)
+    }
+
     pub(super) fn live_text_with_pending(&self) -> String {
         let live = self.live_text();
         if live.is_empty() || self.input_buf.cursor() != self.input_buf.char_count() {

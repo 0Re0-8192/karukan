@@ -434,10 +434,27 @@ impl InputMethodEngine {
     /// emoji candidate (falling back to the literal query), katakana mode
     /// commits katakana, live conversion commits the converted text.
     pub(super) fn resolve_composing_commit(&mut self) -> (String, String) {
-        // Resolve the live text before settling: it needs the pending run
-        let live_text = self.live_text_with_pending();
+        // Resolve the live text before settling: it needs the pending run.
+        // A last lone `n` settles into ん, so what live conversion showed
+        // (`佐藤さn`) is converted again from the settled reading (さとうさん).
+        let reconvert = self.pending_settles_differently()
+            && !matches!(self.mode.current(), InputMode::Katakana | InputMode::Emoji)
+            && !self.live_text_with_pending().is_empty();
+        let live_text = if reconvert {
+            String::new()
+        } else {
+            self.live_text_with_pending()
+        };
         self.settle_romaji();
         let reading = self.input_buf.reading();
+        let live_text = if reconvert {
+            let converted = self
+                .chunked_auto_suggest()
+                .unwrap_or_else(|| reading.clone());
+            self.live_english(&converted).unwrap_or(converted)
+        } else {
+            live_text
+        };
         let text = if self.mode.current() == InputMode::Emoji {
             self.first_emoji_candidate(&reading)
                 .unwrap_or_else(|| reading.clone())
