@@ -115,3 +115,24 @@ fn a_last_n_settles_into_n_kana_for_the_script_keys() {
     engine.process_key(&key(Keysym::F10));
     assert_eq!(engine.preedit().unwrap().text(), "kan");
 }
+
+#[test]
+fn f10_never_offers_the_same_form_twice() {
+    // `/e` capitalized is `/e` again
+    let mut engine = InputMethodEngine::new();
+    type_str(&mut engine, "/e");
+    engine.process_key(&key(Keysym::F10));
+    let texts: Vec<String> = engine
+        .state()
+        .candidates()
+        .unwrap()
+        .candidates()
+        .iter()
+        .map(|c| c.text.clone())
+        .collect();
+    let mut unique = texts.clone();
+    unique.dedup();
+    unique.sort();
+    unique.dedup();
+    assert_eq!(unique.len(), texts.len(), "{texts:?}");
+}

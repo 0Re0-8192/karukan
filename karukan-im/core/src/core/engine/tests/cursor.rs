@@ -363,3 +363,31 @@ fn test_cursor_composed_hiragana_tracking() {
     assert_eq!(engine.input_buf.reading(), "");
     assert_eq!(engine.input_buf.cursor(), 0);
 }
+
+#[test]
+fn unbound_keys_do_not_leak_while_composing() {
+    // ↑ or PageUp reaching the application would move its caret away from
+    // the composition; a Ctrl chord would act on text still being typed.
+    let mut engine = InputMethodEngine::new();
+    engine.converters.kanji = None;
+    engine.process_key(&press('a'));
+    for key in [
+        press_key(Keysym::UP),
+        press_key(Keysym::PAGE_UP),
+        press_ctrl(Keysym(b'z' as u32)),
+    ] {
+        let r = engine.process_key(&key);
+        assert!(r.consumed, "{:?} leaked", key.keysym);
+        assert_eq!(engine.preedit().unwrap().text(), "あ");
+    }
+    // Alt chords still reach the desktop
+    let alt = KeyEvent {
+        keysym: Keysym::UP,
+        modifiers: KeyModifiers {
+            alt_key: true,
+            ..KeyModifiers::default()
+        },
+        is_press: true,
+    };
+    assert!(!engine.process_key(&alt).consumed);
+}

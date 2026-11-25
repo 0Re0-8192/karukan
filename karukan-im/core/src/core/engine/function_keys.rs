@@ -38,8 +38,13 @@ fn case_cycle(raw: &str) -> Vec<String> {
     let lower = raw.to_lowercase();
     let upper = raw.to_uppercase();
     let cap = capitalize(raw);
-    let mut forms = vec![lower, upper, cap];
-    forms.dedup();
+    let mut forms: Vec<String> = Vec::new();
+    // `/e` capitalizes to itself: no form twice, wherever it falls
+    for form in [lower, upper, cap] {
+        if !forms.contains(&form) {
+            forms.push(form);
+        }
+    }
     forms
 }
 

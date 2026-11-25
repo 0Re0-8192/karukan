@@ -65,6 +65,15 @@ pub fn clean_model_output(text: &str) -> String {
     text.trim().to_string()
 }
 
+/// The cleaned output, or `None` when there is nothing to offer: empty, or
+/// holding U+FFFD — the model stopped partway through a character it spells
+/// byte by byte (`っ→` beamed into `ッ�城郡`), and the decoder could only
+/// stand a replacement mark in for the missing bytes.
+fn usable_output(text: &str) -> Option<String> {
+    let clean = clean_model_output(text);
+    (!clean.is_empty() && !clean.contains('\u{FFFD}')).then_some(clean)
+}
+
 /// Kanji converter using llama.cpp backend
 pub struct KanaKanjiConverter {
     model: LlamaCppModel,
@@ -135,9 +144,7 @@ impl KanaKanjiConverter {
                     .generate_within(&tokens, MAX_NEW_TOKENS, eos, deadline)?;
             let generated = &output_tokens[tokens.len()..];
             let text = self.model.decode(generated, true)?;
-            let clean = clean_model_output(&text);
-
-            if !clean.is_empty() {
+            if let Some(clean) = usable_output(&text) {
                 candidates.push(clean);
             }
         } else {
@@ -152,9 +159,9 @@ impl KanaKanjiConverter {
 
             for (output_tokens, _score) in results {
                 let text = self.model.decode(&output_tokens, true)?;
-                let clean = clean_model_output(&text);
-
-                if !clean.is_empty() && !candidates.contains(&clean) {
+                if let Some(clean) = usable_output(&text)
+                    && !candidates.contains(&clean)
+                {
                     candidates.push(clean);
                 }
             }
@@ -177,6 +184,13 @@ impl KanaKanjiConverter {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_broken_character_is_no_candidate() {
+        assert_eq!(usable_output(" 今日 ").as_deref(), Some("今日"));
+        assert_eq!(usable_output("ッ\u{FFFD}城郡"), None);
+        assert_eq!(usable_output("  "), None);
+    }
 
     fn hugging_face_source(repo: &str, filename: &str) -> ModelSource {
         ModelSource::HuggingFace {

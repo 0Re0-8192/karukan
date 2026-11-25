@@ -348,7 +348,22 @@ impl InputMethodEngine {
                     };
                     return self.input_char(ch);
                 }
-                EngineResult::not_consumed()
+                // Any other key is a no-op while composing, as it is in
+                // Conversion (mozc consumes them in both): leaked, ↑ or
+                // PageUp moves the application's caret away from the
+                // composition, and a Ctrl chord acts on text the user is
+                // still typing. Alt/Super chords, the modifier keys
+                // themselves and the Japanese keyboard's IME keys (a chord
+                // like Ctrl+変換 may be a desktop shortcut) still reach the
+                // desktop.
+                let k = key.keysym.0;
+                let modifier_key = (0xffe1..=0xffee).contains(&k) || (0xfe01..=0xfe0f).contains(&k);
+                let ime_key = (0xff20..=0xff3f).contains(&k);
+                if key.modifiers.alt_key || key.modifiers.super_key || modifier_key || ime_key {
+                    EngineResult::not_consumed()
+                } else {
+                    EngineResult::consumed()
+                }
             }
         }
     }

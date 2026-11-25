@@ -1030,7 +1030,10 @@ impl TextService_Impl {
         let Some(result) = result else {
             return false;
         };
-        let consumed = result.consumed;
+        // 変換 and ひらがな are the IME's own keys (OnTestKeyDown said so): the
+        // engine leaves the hiragana-mode key unconsumed when it is already in
+        // hiragana mode, which must not hand the key to the application mid-word.
+        let consumed = result.consumed || matches!(vk, keymap::VK_CONVERT | keymap::VK_OEM_COPY);
         // a commit or an emptied preedit ends the composition: the next word starts afresh
         let ends = result.actions.iter().any(|a| {
             matches!(a, Action::Commit { .. })
