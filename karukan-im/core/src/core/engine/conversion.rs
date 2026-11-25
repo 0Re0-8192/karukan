@@ -371,14 +371,22 @@ impl InputMethodEngine {
         // 1. Learning cache candidates (highest priority).
         //    Force-inserted so they win against duplicate text from later sources.
         //    Skipped when the caller asks for a learning-free conversion (Tab key).
+        //    Only exact hits lead: a learned longer phrase (こんばんは鍋です
+        //    under こんばんは) is not what was typed, and at the head of the
+        //    list Space+Enter would commit text the user never typed. Those
+        //    join the predictive matches below.
+        let mut learned_predictive = Vec::new();
         if learning == LearningLookup::Use {
             for c in self.lookup_learning_candidates(reading) {
+                if c.reading.as_deref().is_some_and(|r| r != reading) {
+                    learned_predictive.push(
+                        AnnotatedCandidate::new(c.text, CandidateSource::Learning)
+                            .with_reading(c.reading),
+                    );
+                    continue;
+                }
                 // Exact matches have reading == input reading; use None to avoid redundancy
-                let cand_reading = c.reading.filter(|r| r != reading);
-                builder.push_force(
-                    AnnotatedCandidate::new(c.text, CandidateSource::Learning)
-                        .with_reading(cand_reading),
-                );
+                builder.push_force(AnnotatedCandidate::new(c.text, CandidateSource::Learning));
             }
         }
 
@@ -435,7 +443,11 @@ impl InputMethodEngine {
             builder.push(ac);
         }
 
-        // 5. Predictive matches, user dictionary first
+        // 5. Predictive matches: learned phrases, then the user dictionary's,
+        //    then the system dictionary's
+        for ac in learned_predictive {
+            builder.push(ac);
+        }
         for ac in dictionary.predictive {
             builder.push(ac);
         }
@@ -505,6 +517,14 @@ impl InputMethodEngine {
         self.lookup_learning(reading, "", MAX_LEARNING_CANDIDATES)
     }
 
+    /// Learning candidates for the composing suggestion list: `reading` is
+    /// the settled part of the buffer, narrowed by the romaji tail still being
+    /// typed (`きs` keeps きし… and drops 今日).
+    pub(super) fn lookup_learning_suggestions(&self, reading: &str) -> Vec<Candidate> {
+        let pending = self.input_buf.pending();
+        self.lookup_learning(reading, &pending, MAX_LEARNING_CANDIDATES)
+    }
+
     /// Full learning history for `reading` (exact + prefix, uncapped),
     /// narrowed by the unresolved romaji tail like the dictionary lookup —
     /// an exact hit on the base must not swallow the typed tail.
@@ -542,8 +562,14 @@ impl InputMethodEngine {
         }
 
         // Prefix match (predictive), narrowed to the kana the tail can
-        // still become — mirrors the dictionary's expanded search
-        for (full_reading, surface, _score) in cache.prefix_lookup(reading) {
+        // still become — mirrors the dictionary's expanded search. Nothing
+        // settled yet (`ky`) predicts nothing: every entry would match.
+        let prefixed = if reading.is_empty() {
+            Vec::new()
+        } else {
+            cache.prefix_lookup(reading)
+        };
+        for (full_reading, surface, _score) in prefixed {
             if candidates.len() >= max {
                 break;
             }

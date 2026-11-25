@@ -123,26 +123,38 @@ pub(super) fn split(
     let n = raw.len();
     let words = words();
 
+    // Score, compared in order: fewest letters taken out of the kana for a
+    // common word, then the English gain, then the fewest pieces. A common
+    // word is only there because the keys around it cannot be kana, so the
+    // split that leaves the most to the kana wins; without that a word would
+    // grab letters of the syllables beside it (`ko|no` read as `k|ok|`,
+    // `a|ri|ma|su` as `a|rim|ass|u`), since each such fragment is a word that
+    // is not kana on its own. Product names and learned words cost nothing:
+    // they are meant to win where the keys also read as kana.
     #[derive(Clone)]
     struct Step {
-        score: (usize, i64),
+        score: (i64, usize, i64),
         end: usize,
         english: bool,
     }
     let mut best: Vec<Option<Step>> = vec![None; n + 1];
     best[n] = Some(Step {
-        score: (0, 0),
+        score: (0, 0, 0),
         end: n,
         english: false,
     });
     for i in (0..n).rev() {
         let mut here: Option<Step> = None;
-        let consider = |end: usize, english: bool, here: &mut Option<Step>| {
+        let consider = |end: usize, english: bool, cost: usize, here: &mut Option<Step>| {
             let Some(next) = &best[end] else { return };
             // cubed, so one long word beats several short ones that merely
             // fit (windows, not now+in+dow+sd)
             let gain = if english { (end - i).pow(3) } else { 0 };
-            let score = (next.score.0 + gain, next.score.1 - 1);
+            let score = (
+                next.score.0 - cost as i64,
+                next.score.1 + gain,
+                next.score.2 - 1,
+            );
             if here.as_ref().is_none_or(|h| score > h.score) {
                 *here = Some(Step {
                     score,
@@ -154,20 +166,21 @@ pub(super) fn split(
         for end in (i + MIN_WORD)..=n {
             let run = &lower[i..end];
             let learned = learned(run);
-            if (words.contains(run) || learned) && (!kana(run) || names().contains(run) || learned)
-            {
-                consider(end, true, &mut here);
+            let named = names().contains(run);
+            if (words.contains(run) || learned) && (!kana(run) || named || learned) {
+                let cost = if named || learned { 0 } else { end - i };
+                consider(end, true, cost, &mut here);
             }
         }
         for end in (i + 1)..=n.min(i + MAX_KANA_RUN) {
             if kana(&lower[i..end]) {
-                consider(end, false, &mut here);
+                consider(end, false, 0, &mut here);
             }
         }
         best[i] = here;
     }
 
-    if best[0].as_ref()?.score.0 == 0 {
+    if best[0].as_ref()?.score.1 == 0 {
         return None;
     }
     let mut pieces: Vec<Piece> = Vec::new();
@@ -501,6 +514,43 @@ mod tests {
         // "ten" and "no" are English words but read as kana
         assert_eq!(show("konotenno"), None);
         assert_eq!(show("dehaga"), None);
+    }
+
+    #[test]
+    fn a_word_never_takes_letters_from_the_syllables_beside_it() {
+        // `ok` fits k|ok|... and `rim`/`ass` fit a|rim|ass|u, and none of
+        // them is kana on its own; the kana around `null` must still win
+        let is_kana = |run: &str| {
+            let table = [
+                "ko", "no", "wo", "a", "ri", "ma", "su", "ha", "ka", "n", "u",
+            ];
+            let mut rest = run;
+            'outer: while !rest.is_empty() {
+                for r in table {
+                    if let Some(t) = rest.strip_prefix(r) {
+                        rest = t;
+                        continue 'outer;
+                    }
+                }
+                return false;
+            }
+            !run.is_empty()
+        };
+        let show = |raw: &str| {
+            split(raw, is_kana, |_| false).map(|ps| {
+                ps.iter()
+                    .map(|p| match p {
+                        Piece::English(w) => format!("[{w}]"),
+                        Piece::Kana(k) => format!("<{k}>"),
+                    })
+                    .collect::<String>()
+            })
+        };
+        assert_eq!(
+            show("kononullwoarimasu").as_deref(),
+            Some("<kono>[null]<woarimasu>")
+        );
+        assert_eq!(show("konokanhanull").as_deref(), Some("<konokanha>[null]"));
     }
 
     #[test]

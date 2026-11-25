@@ -389,6 +389,14 @@ fn ctrl_delete_removes_prefix_matched_entry_by_full_reading() {
     engine.process_key(&press('a'));
     engine.process_key(&press('i'));
     engine.process_key(&press_key(Keysym::SPACE));
+    // a longer learned phrase is a prediction: it follows what was typed
+    for _ in 0..10 {
+        let at = engine.state().candidates().unwrap().selected().unwrap();
+        if at.text == "挨拶" {
+            break;
+        }
+        engine.process_key(&press_key(Keysym::SPACE));
+    }
 
     let selected = engine
         .state()
@@ -499,4 +507,88 @@ fn enter_on_a_short_live_conversion_is_still_learned() {
         !engine.learning.as_ref().unwrap().lookup("うえ").is_empty(),
         "a word-length live commit is learned as before"
     );
+}
+
+fn type_keys(engine: &mut InputMethodEngine, keys: &str) {
+    for c in keys.chars() {
+        engine.process_key(&press(c));
+    }
+}
+
+fn suggestion_texts(engine: &InputMethodEngine) -> Vec<String> {
+    engine
+        .shown_suggestions
+        .candidates()
+        .iter()
+        .map(|c| c.text.clone())
+        .collect()
+}
+
+#[test]
+fn space_does_not_lead_with_a_longer_learned_phrase() {
+    // Learned once as a whole sentence; typing just its start and pressing
+    // Space must not put the rest of the sentence first, where Enter would
+    // commit words that were never typed.
+    let mut engine = engine_with_learned("こんばんはなべです", "こんばんは鍋です");
+    type_keys(&mut engine, "konbanha");
+    engine.process_key(&press_key(Keysym::SPACE));
+    let list: Vec<String> = engine
+        .state()
+        .candidates()
+        .unwrap()
+        .candidates()
+        .iter()
+        .map(|c| c.text.clone())
+        .collect();
+    assert_ne!(
+        list.first().map(String::as_str),
+        Some("こんばんは鍋です"),
+        "{list:?}"
+    );
+    assert!(list.iter().any(|t| t == "こんばんは鍋です"), "{list:?}");
+}
+
+#[test]
+fn an_exact_learned_word_still_leads_the_space_list() {
+    let mut engine = engine_with_learned("あい", "藍");
+    type_keys(&mut engine, "ai");
+    engine.process_key(&press_key(Keysym::SPACE));
+    let first = engine
+        .state()
+        .candidates()
+        .unwrap()
+        .selected()
+        .unwrap()
+        .text
+        .clone();
+    assert_eq!(first, "藍");
+}
+
+#[test]
+fn bare_consonants_suggest_no_learned_words() {
+    // `ky` has settled nothing yet: every learned word would match an empty
+    // reading, so none is offered.
+    let mut engine = engine_with_learned("きしゃ", "汽車");
+    engine
+        .learning
+        .as_mut()
+        .unwrap()
+        .record("うぃんどうず", "Windows");
+    type_keys(&mut engine, "ky");
+    let shown = suggestion_texts(&engine);
+    assert!(
+        !shown.iter().any(|t| t == "汽車" || t == "Windows"),
+        "{shown:?}"
+    );
+}
+
+#[test]
+fn the_romaji_tail_narrows_learned_suggestions() {
+    // き + `s` can only go on as きさ/きし/…: 今日 (きょう) no longer fits
+    let mut engine = engine_with_learned("きょう", "今日");
+    engine.learning.as_mut().unwrap().record("きしゃ", "汽車");
+    type_keys(&mut engine, "kis");
+    let shown = suggestion_texts(&engine);
+    assert!(!shown.iter().any(|t| t == "今日"), "{shown:?}");
+    assert!(shown.iter().any(|t| t == "汽車"), "{shown:?}");
 }

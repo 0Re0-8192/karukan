@@ -76,7 +76,7 @@ impl InputMethodEngine {
             self.live.shown = false;
             let preedit = self.set_composing_state();
             let reading = full_reading;
-            let mut all_candidates = self.lookup_learning_candidates(&reading);
+            let mut all_candidates = self.lookup_learning_suggestions(&reading);
             append_candidates_dedup(&mut all_candidates, self.lookup_dict_candidates(&reading));
             append_candidates_dedup(&mut all_candidates, self.lookup_rewriter_variants(&reading));
             let aux = self.format_aux_composing();
@@ -113,7 +113,7 @@ impl InputMethodEngine {
     /// reading — stays on screen for the whole live conversion.
     fn suggest_result(&mut self, candidates: Vec<String>, reading: &str) -> EngineResult {
         let preedit = self.set_composing_state();
-        let mut all_candidates = self.lookup_learning_candidates(reading);
+        let mut all_candidates = self.lookup_learning_suggestions(reading);
         let model_candidates: Vec<Candidate> = candidates
             .into_iter()
             .map(|s| Candidate::with_reading(s, reading))
