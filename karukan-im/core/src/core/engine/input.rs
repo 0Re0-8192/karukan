@@ -229,6 +229,30 @@ impl InputMethodEngine {
             .with_action(EngineAction::UpdateAuxText(self.format_aux_composing()))
     }
 
+    /// Make `reading` (kana composed elsewhere: a flick keyboard, whose
+    /// toggles and dakuten its own composer handles) the composition, and
+    /// show what typing it would — live conversion and suggestions. Empty
+    /// ends the composition. Space, Enter and candidate selection then work
+    /// on it as on a typed one.
+    pub fn set_reading(&mut self, reading: &str) -> EngineResult {
+        self.state = InputState::Empty;
+        self.clear_composition();
+        self.mode = ModeState::default();
+        if reading.is_empty() {
+            return EngineResult::consumed()
+                .with_action(EngineAction::UpdatePreedit(Preedit::new()))
+                .with_action(EngineAction::HideCandidates)
+                .with_action(EngineAction::HideAuxText);
+        }
+        for ch in reading.chars() {
+            self.input_buf.push_direct(ch);
+        }
+        self.state = InputState::Composing {
+            preedit: Preedit::new(),
+        };
+        self.refresh_input_state()
+    }
+
     /// The space the Space key inputs: the configured one while typing
     /// kana, the ASCII one in direct input — the same edge the width rules
     /// stop at.

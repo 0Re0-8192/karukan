@@ -5,11 +5,16 @@
 //! reply). A composition belongs to one engine from its first key until it is empty again, so the
 //! two never mix: keys the engine cannot translate (kana from a flick keyboard, for example) start
 //! no karukan composition at all.
+//!
+//! Such a composition is still converted by karukan: Mozc composes the kana (flick, toggles,
+//! dakuten), and every time its preedit changes the reading is handed to the engine, whose
+//! candidates are put ahead of Mozc's in the reply ("follow"). A tap on one of them commits it
+//! through the engine (which learns it) and Mozc is told to revert its composition.
 
 use serde_json::{Value, json};
 
 use crate::input::{self, Input};
-use crate::output::{self, CandView, Frame, PreeditView};
+use crate::output::{self, CandView, Frame, ListItem, PreeditView};
 use crate::proto::{self, Val};
 
 /// JSON-RPC access to the engine (`karukan-imserver` protocol).
@@ -75,7 +80,23 @@ pub struct Bridge<B: Backend> {
     session: Option<u64>,
     /// Arguments of the last reply, to build it again with other candidates.
     last: Option<LastReply>,
+    /// Mozc's composition is converted by the engine too.
+    follow: Option<Follow>,
+    /// The text around the caret when the last key reached Mozc with nothing composing: the
+    /// context of the composition it starts. Later keys carry Mozc's own preedit in it.
+    context: Option<(String, String)>,
 }
+
+struct Follow {
+    reading: String,
+    /// The engine's candidates for `reading`.
+    items: Vec<(String, Option<String>)>,
+    /// The last amended reply.
+    reply: Option<Vec<u8>>,
+}
+
+/// Ids of the engine's candidates in a follow reply, clear of Mozc's own (small, or negative).
+const FOLLOW_ID: i64 = 0x3000_0000;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum ShadowPlan {
@@ -113,6 +134,8 @@ impl<B: Backend> Bridge<B> {
             extras: Vec::new(),
             session: None,
             last: None,
+            follow: None,
+            context: None,
         }
     }
 
@@ -162,9 +185,20 @@ impl<B: Backend> Bridge<B> {
     /// Handle one `Command` (input only) from the IME. `None`: pass it to Mozc.
     pub fn handle(&mut self, bytes: &[u8]) -> Option<Vec<u8>> {
         let (raw, inp) = input::decode_command_input(bytes)?;
+        if inp.ty == input::SEND_KEY && !self.active && !self.mozc_active {
+            self.context = Some((
+                inp.preceding.clone().unwrap_or_default(),
+                inp.following.clone().unwrap_or_default(),
+            ));
+        }
         match inp.ty {
             input::SEND_KEY | input::TEST_SEND_KEY => self.on_key(raw, &inp),
-            input::SEND_COMMAND => self.on_command(raw, &inp),
+            input::SEND_COMMAND => {
+                if let Some(r) = self.on_follow_command(raw, &inp) {
+                    return Some(r);
+                }
+                self.on_command(raw, &inp)
+            }
             input::SET_REQUEST => {
                 if let Some(t) = inp.request_table {
                     self.table = t;
@@ -173,6 +207,7 @@ impl<B: Backend> Bridge<B> {
             }
             input::DELETE_SESSION => {
                 self.drop_composition();
+                self.end_follow();
                 None
             }
             _ => None,
@@ -231,7 +266,7 @@ impl<B: Backend> Bridge<B> {
             return None;
         }
         let test = inp.ty == input::TEST_SEND_KEY;
-        if !self.active && !(self.can_claim() && input::is_romaji_start(key)) {
+        if !(self.active || (self.can_claim() && input::is_romaji_start(key))) {
             return None;
         }
         let Some(sym) = input::keysym(key) else {
@@ -241,6 +276,7 @@ impl<B: Backend> Bridge<B> {
             return Some(self.reply(raw, inp, true, None));
         }
         if !self.active {
+            self.end_follow();
             self.set_context(inp);
         }
         let params = json!({
@@ -259,6 +295,10 @@ impl<B: Backend> Bridge<B> {
     fn set_context(&mut self, inp: &Input) {
         let before = inp.preceding.clone().unwrap_or_default();
         let after = inp.following.clone().unwrap_or_default();
+        self.send_context(&before, &after);
+    }
+
+    fn send_context(&mut self, before: &str, after: &str) {
         // Keep the request small: only the tail matters to the model.
         let tail: String = {
             let n = before.chars().count();
@@ -558,9 +598,226 @@ impl<B: Backend> Bridge<B> {
                 _ => {}
             }
         }
-        let text = self.pending.take()?;
-        output::inject_result(mozc_reply, &text)
+        let amended = self.follow_reply(mozc_reply);
+        match self.pending.take() {
+            Some(text) => output::inject_result(amended.as_deref().unwrap_or(mozc_reply), &text),
+            None => amended,
+        }
     }
+
+    /// Follow Mozc's composition: hand its reading to the engine and put the engine's candidates
+    /// ahead of Mozc's. `None` keeps Mozc's reply as it is.
+    fn follow_reply(&mut self, mozc_reply: &[u8]) -> Option<Vec<u8>> {
+        // The revert after a commit rides on the hybrid exchange, so no hybrid, no follow.
+        let can = self.hybrid
+            && !self.active
+            && self.ime_on
+            && self.mode == input::MODE_HIRAGANA
+            && !input::is_qwerty_romaji_table(self.table);
+        let Some(view) = can.then(|| mozc_view(mozc_reply)).flatten() else {
+            self.end_follow();
+            return None;
+        };
+        if view.converting {
+            // Mozc's candidates are for one of its segments now: leave them to it.
+            return None;
+        }
+        if !self.is_ready() {
+            return None;
+        }
+        if self.follow.is_none() {
+            let (before, after) = self.context.take().unwrap_or_default();
+            self.send_context(&before, &after);
+        }
+        if self
+            .follow
+            .as_ref()
+            .is_none_or(|f| f.reading != view.reading)
+        {
+            let res = self
+                .be
+                .call("set_reading", json!({"text": view.reading}))
+                .unwrap_or_default();
+            self.follow = Some(Follow {
+                reading: view.reading.clone(),
+                items: shown_candidates(&res),
+                reply: None,
+            });
+        }
+        let f = self.follow.as_mut()?;
+        if f.items.is_empty() {
+            f.reply = None;
+            return None;
+        }
+        let mut list: Vec<ListItem> = f
+            .items
+            .iter()
+            .enumerate()
+            .map(|(i, (text, desc))| ListItem {
+                id: FOLLOW_ID + i as i64,
+                text: text.clone(),
+                desc: desc.clone(),
+            })
+            .collect();
+        for it in view.items {
+            if !it.text.is_empty() && !list.iter().any(|l| l.text == it.text) {
+                list.push(it);
+            }
+        }
+        let reply = output::replace_candidates(mozc_reply, &list, view.category)?;
+        f.reply = Some(reply.clone());
+        Some(reply)
+    }
+
+    /// A tap on one of the engine's candidates in a follow reply: commit it through the engine.
+    fn on_follow_command(&mut self, raw: &[u8], inp: &Input) -> Option<Vec<u8>> {
+        let cmd = inp.command.as_ref()?;
+        let f = self.follow.as_ref()?;
+        let idx = cmd.id? as i64 - FOLLOW_ID;
+        let idx = usize::try_from(idx).ok().filter(|i| *i < f.items.len())?;
+        use input::*;
+        match cmd.ty {
+            SC_SELECT_CANDIDATE | SC_SUBMIT_CANDIDATE => {
+                let fallback = f.items[idx].0.clone();
+                let res = self
+                    .be
+                    .call("select_candidate", json!({"page_index": idx}))
+                    .unwrap_or_default();
+                let mut text: String = res["actions"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter(|a| a["type"].as_str() == Some("commit"))
+                    .filter_map(|a| a["text"].as_str())
+                    .collect();
+                if text.is_empty() {
+                    text = fallback;
+                } else {
+                    self.be.call("save_learning", json!({}));
+                }
+                self.end_follow();
+                // Mozc still holds the kana: the hybrid exchange reverts it (shadow_command).
+                self.mozc_active = false;
+                self.shadow = true;
+                self.session = inp.id.or(self.session);
+                self.extras.clear();
+                Some(output::encode_command(
+                    raw,
+                    inp.id,
+                    true,
+                    Some(&text),
+                    &Frame::default(),
+                ))
+            }
+            // Mozc does not know the id: show the same thing again.
+            SC_HIGHLIGHT_CANDIDATE => f.reply.clone(),
+            _ => None,
+        }
+    }
+
+    fn end_follow(&mut self) {
+        if self.follow.take().is_some() {
+            self.be.call("set_reading", json!({"text": ""}));
+        }
+    }
+}
+
+/// The candidates of an engine `KeyResult` (its last `show_candidates`).
+fn shown_candidates(res: &Value) -> Vec<(String, Option<String>)> {
+    let mut items = Vec::new();
+    for a in res["actions"].as_array().into_iter().flatten() {
+        match a["type"].as_str() {
+            Some("show_candidates") => {
+                items = a["candidates"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|c| {
+                        let text = c["text"].as_str().filter(|t| !t.is_empty())?;
+                        Some((
+                            text.to_string(),
+                            c["description"].as_str().map(str::to_string),
+                        ))
+                    })
+                    .collect();
+            }
+            Some("hide_candidates") => items.clear(),
+            _ => {}
+        }
+    }
+    items
+}
+
+/// What a Mozc reply shows: the reading of its preedit, whether a segment is being converted,
+/// and its candidates (ids as Mozc gave them).
+struct MozcView {
+    reading: String,
+    converting: bool,
+    items: Vec<ListItem>,
+    category: u64,
+}
+
+fn mozc_view(reply: &[u8]) -> Option<MozcView> {
+    let top = proto::parse(reply)?;
+    let out = proto::parse(proto::get(&top, 2)?.as_bytes()?)?;
+    let pre = proto::parse(proto::get(&out, 5)?.as_bytes()?)?;
+    let mut reading = String::new();
+    let mut converting = proto::get(&pre, 3).is_some();
+    for (f, v) in &pre {
+        let (2, Val::Group(g) | Val::Len(g)) = (*f, v) else {
+            continue;
+        };
+        let Some(seg) = proto::parse(g) else { continue };
+        if proto::get(&seg, 3).and_then(|v| v.as_u64()) == Some(output::ANN_HIGHLIGHT) {
+            converting = true;
+        }
+        if let Some(t) = proto::get(&seg, 4).and_then(|v| v.as_str()) {
+            reading.push_str(&t);
+        }
+    }
+    if reading.is_empty() {
+        return None;
+    }
+    let mut items = Vec::new();
+    let mut category = output::CAT_SUGGESTION;
+    if let Some(list) = proto::get(&out, 14)
+        .and_then(|v| v.as_bytes())
+        .and_then(proto::parse)
+    {
+        if proto::get(&list, 1).is_some() {
+            converting = true; // a focused candidate: a conversion
+        }
+        if let Some(c) = proto::get(&list, 3).and_then(|v| v.as_u64()) {
+            if c == output::CAT_CONVERSION {
+                converting = true;
+            }
+            category = c;
+        }
+        for (f, v) in &list {
+            if *f != 2 {
+                continue;
+            }
+            let Some(c) = v.as_bytes().and_then(proto::parse) else {
+                continue;
+            };
+            let Some(text) = proto::get(&c, 4).and_then(|v| v.as_str()) else {
+                continue;
+            };
+            let id = proto::get(&c, 1).and_then(|v| v.as_u64()).unwrap_or(0) as i32 as i64;
+            let desc = proto::get(&c, 5)
+                .and_then(|v| v.as_bytes())
+                .and_then(proto::parse)
+                .and_then(|a| proto::get(&a, 3).and_then(|v| v.as_str()))
+                .filter(|d| !d.is_empty());
+            items.push(ListItem { id, text, desc });
+        }
+    }
+    Some(MozcView {
+        reading,
+        converting,
+        items,
+        category,
+    })
 }
 
 /// The candidates of a Mozc reply (`Output.all_candidate_words`: value in field 4, annotation

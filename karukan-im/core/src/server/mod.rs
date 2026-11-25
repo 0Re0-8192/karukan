@@ -105,6 +105,15 @@ impl ImServer {
                 let result = self.engine.select_candidate_on_page(params.page_index);
                 self.key_result(result)
             }
+            "set_reading" => {
+                let text = params
+                    .get("text")
+                    .and_then(|t| t.as_str())
+                    .unwrap_or_default()
+                    .to_string();
+                let result = self.engine.set_reading(&text);
+                self.key_result(result)
+            }
             "commit" => {
                 let result = self.engine.commit_result();
                 self.key_result(result)

@@ -350,3 +350,30 @@ fn tab_steps_into_the_suggestions_on_screen() {
             .is_empty()
     );
 }
+
+#[test]
+fn a_reading_composed_elsewhere_converts_like_a_typed_one() {
+    // a flick keyboard's composer hands over the kana; Space and Enter work
+    // on it as on typed romaji
+    let mut engine = engine_with_learned("あい", "藍");
+    let r = engine.set_reading("あい");
+    assert!(r.consumed);
+    assert!(matches!(engine.state(), InputState::Composing { .. }));
+    let shown: Vec<String> = engine
+        .shown_suggestions
+        .candidates()
+        .iter()
+        .map(|c| c.text.clone())
+        .collect();
+    assert!(shown.iter().any(|t| t == "藍"), "{shown:?}");
+    // the next reading replaces it (a toggle turned あい into あう)
+    engine.set_reading("あう");
+    assert_eq!(engine.input_buf.reading(), "あう");
+    engine.set_reading("あい");
+    send(&mut engine, "␣");
+    assert!(matches!(engine.state(), InputState::Conversion { .. }));
+    let r = engine.process_key(&press_key(Keysym::RETURN));
+    assert_eq!(commit_of(&r).as_deref(), Some("藍"));
+    engine.set_reading("");
+    assert!(matches!(engine.state(), InputState::Empty));
+}

@@ -12,6 +12,7 @@
 //! | `process_key`          | [`ProcessKeyParams`]                     | [`KeyResult`]     |
 //! | `select_candidate`     | [`SelectCandidateParams`]                | [`KeyResult`]     |
 //! | `commit`               | `{}`                                     | [`KeyResult`]     |
+//! | `set_reading`          | `{"text": kana}` (a flick keyboard's)     | [`KeyResult`]     |
 //! | `reset`                | `{}`                                     | `{}`              |
 //! | `set_surrounding_text` | [`SurroundingTextParams`]                | `{}`              |
 //! | `save_learning`        | `{}`                                     | `{}`              |

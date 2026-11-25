@@ -98,39 +98,85 @@ fn write_candidates(out: &mut W, c: &CandView, converting: bool) {
     } else {
         CAT_SUGGESTION
     };
+    let items: Vec<ListItem> = c
+        .items
+        .iter()
+        .enumerate()
+        .map(|(i, (text, desc))| ListItem {
+            id: i as i64,
+            text: text.clone(),
+            desc: desc.clone(),
+        })
+        .collect();
+    write_list(out, &items, converting.then_some(c.cursor), cat);
+}
+
+/// One candidate as written to the strip: the id is what a tap on it sends back.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ListItem {
+    pub id: i64,
+    pub text: String,
+    pub desc: Option<String>,
+}
+
+fn write_list(out: &mut W, items: &[ListItem], cursor: Option<usize>, cat: u64) {
     // all_candidate_words (CandidateList)
     out.message(14, |l| {
-        if converting {
-            l.uint(1, c.cursor as u64);
+        if let Some(c) = cursor {
+            l.uint(1, c as u64);
         }
-        for (i, (text, desc)) in c.items.iter().enumerate() {
+        for (i, it) in items.iter().enumerate() {
             l.message(2, |w| {
-                w.int(1, i as i64); // id
+                w.int(1, it.id);
                 w.uint(2, i as u64); // index
-                w.string(4, text);
-                write_annotation(w, 5, desc);
+                w.string(4, &it.text);
+                write_annotation(w, 5, &it.desc);
             });
         }
         l.uint(3, cat);
     });
     // candidate_window
     out.message(6, |cw| {
-        if converting {
-            cw.uint(1, c.cursor as u64);
+        if let Some(c) = cursor {
+            cw.uint(1, c as u64);
         }
-        cw.uint(2, c.items.len() as u64);
-        for (i, (text, desc)) in c.items.iter().enumerate() {
+        cw.uint(2, items.len() as u64);
+        for (i, it) in items.iter().enumerate() {
             cw.group(3, |g| {
                 g.uint(4, i as u64);
-                g.string(5, text);
-                g.int(9, i as i64);
-                write_annotation(g, 7, desc);
+                g.string(5, &it.text);
+                g.int(9, it.id);
+                write_annotation(g, 7, &it.desc);
             });
         }
         cw.uint(6, 0); // position
         cw.uint(11, cat);
         cw.uint(18, 9); // page_size
     });
+}
+
+/// A Mozc reply with its candidates (`all_candidate_words` and `candidate_window`) replaced by
+/// `items`; every other field is kept as Mozc wrote it.
+pub fn replace_candidates(cmd: &[u8], items: &[ListItem], cat: u64) -> Option<Vec<u8>> {
+    let top = proto::parse(cmd)?;
+    let out_raw = proto::get(&top, 2)?.as_bytes()?;
+    let of = proto::parse(out_raw)?;
+    let mut o = W::new();
+    let kept: Vec<(u32, Val<'_>)> = of
+        .into_iter()
+        .filter(|(f, _)| *f != 14 && *f != 6)
+        .collect();
+    write_fields(&mut o, &kept);
+    write_list(&mut o, items, None, cat);
+    let mut w = W::new();
+    for (f, v) in &top {
+        if *f == 2 {
+            continue;
+        }
+        write_fields(&mut w, &[(*f, *v)]);
+    }
+    w.bytes(2, &o.0);
+    Some(w.0)
 }
 
 /// Serialize `Command{ input = <echo>, output = Output{...} }`.
