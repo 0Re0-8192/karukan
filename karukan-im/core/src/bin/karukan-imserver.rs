@@ -36,6 +36,41 @@ fn prefetch_models() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Keeps typing responsive while something else holds every core (a render,
+/// a game): the server converts a keystroke in a few tens of milliseconds and
+/// then sleeps, so running it above normal priority costs the other work
+/// almost nothing, while at normal priority a conversion's threads are
+/// preempted by the busy ones and each waits on the slowest of them. Measured
+/// with all 32 threads of a 16-core CPU spinning (`load_bench`): at normal,
+/// up to 55 keys in 136 over 100 ms and single keys stalled 0.4–2.9 s; above
+/// it, at most 3 over 100 ms and none past 160 ms. Also opts out of power throttling, which on CPUs with efficiency cores
+/// would put a windowless background process on them.
+#[cfg(windows)]
+fn keep_up_under_load() {
+    use windows::Win32::System::Threading::{
+        ABOVE_NORMAL_PRIORITY_CLASS, GetCurrentProcess, PROCESS_POWER_THROTTLING_CURRENT_VERSION,
+        PROCESS_POWER_THROTTLING_EXECUTION_SPEED, PROCESS_POWER_THROTTLING_STATE,
+        ProcessPowerThrottling, SetPriorityClass, SetProcessInformation,
+    };
+    unsafe {
+        let me = GetCurrentProcess();
+        if let Err(e) = SetPriorityClass(me, ABOVE_NORMAL_PRIORITY_CLASS) {
+            tracing::warn!("priority not raised: {e}");
+        }
+        let state = PROCESS_POWER_THROTTLING_STATE {
+            Version: PROCESS_POWER_THROTTLING_CURRENT_VERSION,
+            ControlMask: PROCESS_POWER_THROTTLING_EXECUTION_SPEED,
+            StateMask: 0,
+        };
+        let _ = SetProcessInformation(
+            me,
+            ProcessPowerThrottling,
+            &state as *const _ as *const _,
+            std::mem::size_of::<PROCESS_POWER_THROTTLING_STATE>() as u32,
+        );
+    }
+}
+
 fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -52,6 +87,9 @@ fn main() {
         }
         return;
     }
+
+    #[cfg(windows)]
+    keep_up_under_load();
 
     // Windows: `--pipe NAME [--idle-exit SECS]` serves every app over one named pipe
     #[cfg(windows)]
