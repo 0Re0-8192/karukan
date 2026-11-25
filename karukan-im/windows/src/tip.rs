@@ -382,7 +382,7 @@ fn guard<T>(default: T, f: impl FnOnce() -> T) -> T {
 
 /// Why a key was lost, written to `debug.log` beside the DLL while a
 /// `debug.flag` file exists there.
-fn diag(msg: &str) {
+pub(crate) fn diag(msg: &str) {
     use std::io::Write;
     let Some(dir) = crate::dll_dir() else { return };
     if !dir.join("debug.flag").exists() {
@@ -1095,7 +1095,9 @@ impl TextService_Impl {
         let Ok(item) = button_if.cast::<ITfLangBarItem>() else {
             return;
         };
-        if unsafe { mgr.AddItem(&item) }.is_ok() {
+        let added = unsafe { mgr.AddItem(&item) };
+        diag(&format!("langbar AddItem {added:?}"));
+        if added.is_ok() {
             self.state.borrow_mut().mode_button = Some((button, mgr));
         } else {
             dbg_log("langbar AddItem failed");

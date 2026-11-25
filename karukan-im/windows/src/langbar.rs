@@ -12,16 +12,21 @@ use windows::Win32::Graphics::Gdi::{
     DT_SINGLELINE, DT_VCENTER, DeleteDC, DeleteObject, DrawTextW, FF_DONTCARE, FW_BOLD, HBITMAP,
     HGDIOBJ, OUT_DEFAULT_PRECIS, SelectObject, SetBkMode, SetTextColor, TRANSPARENT,
 };
+use windows::Win32::Graphics::Gdi::{
+    GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromPoint,
+};
 use windows::Win32::System::Registry::{HKEY_CURRENT_USER, RRF_RT_REG_DWORD, RegGetValueW};
+use windows::Win32::UI::Input::KeyboardAndMouse::GetFocus;
 use windows::Win32::UI::TextServices::{
     GUID_LBI_INPUTMODE, ITfLangBarItem_Impl, ITfLangBarItemButton, ITfLangBarItemButton_Impl,
     ITfLangBarItemSink, ITfMenu, ITfSource, ITfSource_Impl, TF_LANGBARITEMINFO, TF_LBI_CLK_LEFT,
-    TF_LBI_CLK_RIGHT, TF_LBI_ICON, TF_LBI_STYLE_BTN_BUTTON, TF_LBI_STYLE_SHOWNINTRAY, TF_LBI_TEXT,
-    TF_LBI_TOOLTIP, TfLBIClick,
+    TF_LBI_CLK_RIGHT, TF_LBI_ICON, TF_LBI_STATUS, TF_LBI_STYLE_BTN_BUTTON,
+    TF_LBI_STYLE_SHOWNINTRAY, TF_LBI_TEXT, TF_LBI_TOOLTIP, TfLBIClick,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreateIconIndirect, CreatePopupMenu, DestroyMenu, GetSystemMetrics, HICON,
-    ICONINFO, MF_STRING, SM_CXSMICON, TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenu,
+    ICONINFO, MF_STRING, SM_CXSMICON, TPM_LEFTALIGN, TPM_LEFTBUTTON, TPM_NONOTIFY, TPM_RETURNCMD,
+    TPM_TOPALIGN, TrackPopupMenu,
 };
 use windows::core::{BSTR, GUID, IUnknown, Interface, Ref, Result, implement, w};
 
@@ -59,9 +64,23 @@ impl ModeButton {
 /// Tell the taskbar the mode changed (icon and text).
 pub fn notify(button: &windows::core::ComObject<ModeButton>) {
     let sink = button.sink.borrow().clone();
-    if let Some(sink) = sink {
-        let _ = unsafe { sink.OnUpdate(TF_LBI_ICON | TF_LBI_TEXT | TF_LBI_TOOLTIP) };
+    let open = (button.hooks.is_open)();
+    match sink {
+        Some(sink) => {
+            let r = unsafe {
+                sink.OnUpdate(TF_LBI_ICON | TF_LBI_STATUS | TF_LBI_TEXT | TF_LBI_TOOLTIP)
+            };
+            log(&format!("notify open={open} OnUpdate={r:?}"));
+        }
+        None => log(&format!("notify open={open}: no sink advised")),
     }
+}
+
+/// A line in debug.log (while debug.flag exists), with the thread: the
+/// taskbar calls into the app's thread, and which one is the question.
+fn log(msg: &str) {
+    let tid = unsafe { windows::Win32::System::Threading::GetCurrentThreadId() };
+    crate::tip::diag(&format!("langbar tid={tid} {msg}"));
 }
 
 fn text(open: bool) -> &'static str {
@@ -202,22 +221,48 @@ impl ITfLangBarItem_Impl for ModeButton_Impl {
 
 impl ITfLangBarItemButton_Impl for ModeButton_Impl {
     fn OnClick(&self, click: TfLBIClick, pt: &POINT, _prcarea: *const RECT) -> Result<()> {
+        log(&format!(
+            "OnClick {:?} at ({}, {}) open={}",
+            click.0,
+            pt.x,
+            pt.y,
+            (self.hooks.is_open)()
+        ));
         if click == TF_LBI_CLK_LEFT {
             (self.hooks.toggle)();
         } else if click == TF_LBI_CLK_RIGHT {
             unsafe {
                 let menu = CreatePopupMenu()?;
                 let _ = AppendMenuW(menu, MF_STRING, ID_WORD as usize, w!("単語の登録"));
-                let owner = (self.hooks.owner)();
+                // as Mozc does: the menu belongs to the app's focused window,
+                // ours only when there is none, and stays inside the work area
+                let owner = Some(GetFocus())
+                    .filter(|h| !h.is_invalid())
+                    .or_else(|| (self.hooks.owner)());
+                let mut x = pt.x;
+                let mon = MonitorFromPoint(*pt, MONITOR_DEFAULTTONEAREST);
+                let mut mi = MONITORINFO {
+                    cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+                    ..Default::default()
+                };
+                if GetMonitorInfoW(mon, &mut mi).as_bool() {
+                    x = x.clamp(mi.rcWork.left, mi.rcWork.right);
+                }
                 let picked = TrackPopupMenu(
                     menu,
-                    TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON,
-                    pt.x,
+                    TPM_NONOTIFY | TPM_RETURNCMD | TPM_LEFTALIGN | TPM_TOPALIGN | TPM_LEFTBUTTON,
+                    x,
                     pt.y,
                     None,
                     owner.unwrap_or_default(),
                     None,
                 );
+                let err = windows::Win32::Foundation::GetLastError();
+                log(&format!(
+                    "menu owner={:?} picked={} err={err:?}",
+                    owner.map(|h| h.0),
+                    picked.0
+                ));
                 let _ = DestroyMenu(menu);
                 if picked.0 as u32 == ID_WORD {
                     (self.hooks.register_word)();
@@ -227,6 +272,7 @@ impl ITfLangBarItemButton_Impl for ModeButton_Impl {
         Ok(())
     }
     fn InitMenu(&self, pmenu: Ref<ITfMenu>) -> Result<()> {
+        log("InitMenu");
         let menu = pmenu.ok()?;
         let label: Vec<u16> = "単語の登録".encode_utf16().collect();
         unsafe {
@@ -247,7 +293,10 @@ impl ITfLangBarItemButton_Impl for ModeButton_Impl {
         Ok(())
     }
     fn GetIcon(&self) -> Result<HICON> {
-        draw_icon(text((self.hooks.is_open)()))
+        let open = (self.hooks.is_open)();
+        let icon = draw_icon(text(open));
+        log(&format!("GetIcon open={open} ok={}", icon.is_ok()));
+        icon
     }
     fn GetText(&self) -> Result<BSTR> {
         Ok(BSTR::from(text((self.hooks.is_open)())))
@@ -260,11 +309,13 @@ impl ITfSource_Impl for ModeButton_Impl {
             return Err(E_INVALIDARG.into());
         }
         let sink: ITfLangBarItemSink = punk.ok()?.cast()?;
+        log("AdviseSink");
         *self.sink.borrow_mut() = Some(sink);
         self.cookie.set(self.cookie.get().wrapping_add(1).max(1));
         Ok(self.cookie.get())
     }
     fn UnadviseSink(&self, dwcookie: u32) -> Result<()> {
+        log("UnadviseSink");
         if dwcookie == self.cookie.get() {
             *self.sink.borrow_mut() = None;
         }
