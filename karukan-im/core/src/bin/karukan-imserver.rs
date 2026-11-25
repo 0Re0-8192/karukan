@@ -45,13 +45,11 @@ fn prefetch_models() -> anyhow::Result<()> {
 ///   Measured with all 32 threads of a 16-core CPU spinning (`load_bench`):
 ///   single keys stalled 0.4–2.9 s at normal, and up to 3.4 s above normal
 ///   against spinners at above normal; at high, none past 125 ms either way.
-/// - OpenMP's threads must sleep when idle: by default they spin between
-///   conversions, which while typing kept about 3 cores busy (50 s of CPU
-///   over 18 s of typing) — at high priority that would take them from the
-///   game. The text service starts the server with `OMP_WAIT_POLICY=PASSIVE`
-///   (the runtime reads it as it loads, so setting it here is too late).
-///   Asleep, a keystroke costs ~6 ms more unloaded (12 → 18 ms) and the CPU
-///   used is the conversions' own.
+/// - The conversion threads must sleep between keystrokes, or at high
+///   priority they would take the cores from the game: MSVC's OpenMP spun
+///   there, keeping about 3 cores busy while one typed (50 s of CPU over 18 s
+///   of typing). On Windows llama.cpp is built on ggml's own thread pool
+///   instead (karukan-engine's Cargo.toml), which sleeps by itself.
 /// - Opts out of power throttling, which on CPUs with efficiency cores would
 ///   put a windowless background process on them.
 ///

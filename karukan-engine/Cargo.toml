@@ -25,7 +25,7 @@ tracing.workspace = true
 chrono.workspace = true
 
 # llama.cpp bindings for GGUF inference
-llama-cpp-2 = { version = "0.1", default-features = false, features = ["openmp", "common"] }
+llama-cpp-2 = { version = "0.1", default-features = false, features = ["common"] }
 yada = "0.7"
 
 # HuggingFace model download
@@ -36,6 +36,15 @@ unicode-normalization = "0.1"
 
 # HuggingFace tokenizers for external BPE tokenization (bypasses llama.cpp's built-in tokenizer)
 tokenizers = "0.23"
+
+# OpenMP everywhere but Windows. On Windows ggml's own thread pool is used:
+# MSVC's OpenMP threads spun between conversions on ~3 cores unless told
+# otherwise, and with them a keystroke took 37 ms (p50, 4 threads, a 35 W
+# 13900T typing at 120 ms a key) against 27 ms on ggml's pool, which sleeps
+# between conversions by itself; under full load both run on one thread
+# (`kanji::load`) and agree.
+[target.'cfg(not(windows))'.dependencies]
+llama-cpp-2 = { version = "0.1", default-features = false, features = ["openmp", "common"] }
 
 [dev-dependencies]
 criterion = "0.8"
