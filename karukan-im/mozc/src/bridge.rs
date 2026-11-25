@@ -89,10 +89,29 @@ pub struct Bridge<B: Backend> {
 
 struct Follow {
     reading: String,
-    /// The engine's candidates for `reading`.
-    items: Vec<(String, Option<String>)>,
+    /// What the engine offers for `reading`, in the order shown.
+    items: Vec<FollowItem>,
     /// The last amended reply.
     reply: Option<Vec<u8>>,
+    /// The last whole conversion put in the preedit: (reading, text).
+    settled: Option<(String, String)>,
+    /// Whether the last amended reply shows a conversion in the preedit (Enter commits it then).
+    inline: bool,
+}
+
+struct FollowItem {
+    text: String,
+    desc: Option<String>,
+    pick: Pick,
+}
+
+/// How a tap on a follow item commits.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Pick {
+    /// The live conversion, what a QWERTY composition would show inline: committed like Enter.
+    Live,
+    /// The engine's candidate at this index.
+    Candidate(usize),
 }
 
 /// Ids of the engine's candidates in a follow reply, clear of Mozc's own (small, or negative).
@@ -192,7 +211,13 @@ impl<B: Backend> Bridge<B> {
             ));
         }
         match inp.ty {
-            input::SEND_KEY | input::TEST_SEND_KEY => self.on_key(raw, &inp),
+            input::SEND_KEY => {
+                if let Some(r) = self.on_follow_enter(raw, &inp) {
+                    return Some(r);
+                }
+                self.on_key(raw, &inp)
+            }
+            input::TEST_SEND_KEY => self.on_key(raw, &inp),
             input::SEND_COMMAND => {
                 if let Some(r) = self.on_follow_command(raw, &inp) {
                     return Some(r);
@@ -606,7 +631,11 @@ impl<B: Backend> Bridge<B> {
             }
         }
         let amended = if composition_reply {
-            self.follow_reply(mozc_reply)
+            let settled = inp
+                .as_ref()
+                .and_then(|i| i.command.as_ref())
+                .is_some_and(|c| c.ty == input::SC_STOP_KEY_TOGGLING);
+            self.follow_reply(mozc_reply, settled)
         } else {
             None
         };
@@ -616,9 +645,21 @@ impl<B: Backend> Bridge<B> {
         }
     }
 
-    /// Follow Mozc's composition: hand its reading to the engine and put the engine's candidates
-    /// ahead of Mozc's. `None` keeps Mozc's reply as it is.
-    fn follow_reply(&mut self, mozc_reply: &[u8]) -> Option<Vec<u8>> {
+    /// Follow Mozc's composition: hand its reading to the engine, show the engine's conversion in
+    /// the preedit, and put the engine's candidates ahead of Mozc's. `settled`: the reply to Gboard's
+    /// stop-toggling, after which the last kana no longer changes. `None` keeps Mozc's reply as it is.
+    fn follow_reply(&mut self, mozc_reply: &[u8], settled: bool) -> Option<Vec<u8>> {
+        let reply = self.follow_amend(mozc_reply, settled);
+        if let Some(f) = self.follow.as_mut() {
+            if reply.is_none() {
+                f.inline = false;
+            }
+            f.reply = reply.clone();
+        }
+        reply
+    }
+
+    fn follow_amend(&mut self, mozc_reply: &[u8], settled: bool) -> Option<Vec<u8>> {
         // The revert after a commit rides on the hybrid exchange, so no hybrid, no follow.
         let can = self.hybrid
             && !self.active
@@ -654,25 +695,57 @@ impl<B: Backend> Bridge<B> {
                 .be
                 .call("set_reading", json!({"text": view.reading}))
                 .unwrap_or_default();
+            let settled = self.follow.take().and_then(|f| f.settled);
             self.follow = Some(Follow {
+                items: follow_items(&res, &view.reading),
                 reading: view.reading.clone(),
-                items: shown_candidates(&res),
                 reply: None,
+                settled,
+                inline: false,
             });
         }
         let f = self.follow.as_mut()?;
         if f.items.is_empty() {
-            f.reply = None;
             return None;
         }
+        // The preedit: the whole conversion once the last kana is settled; while it may still
+        // toggle, the conversion shown so far plus the kana typed since, so the kana being chosen
+        // stays visible. A caret moved into the composition keeps Mozc's kana.
+        let live = f
+            .items
+            .first()
+            .filter(|it| it.pick == Pick::Live)
+            .map(|it| it.text.clone());
+        let whole = live.unwrap_or_else(|| view.reading.clone());
+        let shown = if !view.caret_at_end {
+            None
+        } else if settled {
+            f.settled = Some((view.reading.clone(), whole.clone()));
+            Some(whole)
+        } else {
+            match &f.settled {
+                Some((r, t)) if view.reading.starts_with(r.as_str()) => {
+                    Some(format!("{t}{}", &view.reading[r.len()..]))
+                }
+                // Typing began here, so the kana may still toggle.
+                None => None,
+                // An edit (a deletion): nothing is toggling.
+                Some(_) => {
+                    f.settled = Some((view.reading.clone(), whole.clone()));
+                    Some(whole)
+                }
+            }
+        };
+        let shown = shown.filter(|s| *s != view.reading);
+        f.inline = shown.is_some();
         let mut list: Vec<ListItem> = f
             .items
             .iter()
             .enumerate()
-            .map(|(i, (text, desc))| ListItem {
+            .map(|(i, it)| ListItem {
                 id: FOLLOW_ID + i as i64,
-                text: text.clone(),
-                desc: desc.clone(),
+                text: it.text.clone(),
+                desc: it.desc.clone(),
             })
             .collect();
         for it in view.items {
@@ -681,8 +754,59 @@ impl<B: Backend> Bridge<B> {
             }
         }
         let reply = output::replace_candidates(mozc_reply, &list, view.category)?;
-        f.reply = Some(reply.clone());
-        Some(reply)
+        match shown {
+            Some(s) => output::replace_preedit(&reply, &s, &view.reading),
+            None => Some(reply),
+        }
+    }
+
+    /// Enter while the preedit shows the engine's conversion: commit that, as a QWERTY
+    /// composition does.
+    fn on_follow_enter(&mut self, raw: &[u8], inp: &Input) -> Option<Vec<u8>> {
+        let key = inp.key.as_ref()?;
+        let enter = matches!(
+            key.special,
+            Some(input::SK_ENTER | input::SK_VIRTUAL_ENTER)
+        ) && !key.shift()
+            && !key.ctrl()
+            && !key.alt()
+            && !key.is_release();
+        if !enter || !self.follow.as_ref().is_some_and(|f| f.inline) {
+            return None;
+        }
+        let res = self
+            .be
+            .call("process_key", json!({"keysym": KEY_RETURN}))
+            .unwrap_or_default();
+        let fallback = self
+            .follow
+            .as_ref()
+            .and_then(|f| f.settled.as_ref().map(|s| s.1.clone()))
+            .unwrap_or_default();
+        Some(self.commit_follow(raw, inp, &res, fallback))
+    }
+
+    /// The engine committed (a tap or Enter): hand its text to Gboard and revert Mozc's kana.
+    fn commit_follow(&mut self, raw: &[u8], inp: &Input, res: &Value, fallback: String) -> Vec<u8> {
+        let mut text: String = res["actions"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|a| a["type"].as_str() == Some("commit"))
+            .filter_map(|a| a["text"].as_str())
+            .collect();
+        if text.is_empty() {
+            text = fallback;
+        } else {
+            self.be.call("save_learning", json!({}));
+        }
+        self.end_follow();
+        // Mozc still holds the kana: the hybrid exchange reverts it (shadow_command).
+        self.mozc_active = false;
+        self.shadow = true;
+        self.session = inp.id.or(self.session);
+        self.extras.clear();
+        output::encode_command(raw, inp.id, true, Some(&text), &Frame::default())
     }
 
     /// A tap on one of the engine's candidates in a follow reply: commit it through the engine.
@@ -694,36 +818,15 @@ impl<B: Backend> Bridge<B> {
         use input::*;
         match cmd.ty {
             SC_SELECT_CANDIDATE | SC_SUBMIT_CANDIDATE => {
-                let fallback = f.items[idx].0.clone();
-                let res = self
-                    .be
-                    .call("select_candidate", json!({"page_index": idx}))
-                    .unwrap_or_default();
-                let mut text: String = res["actions"]
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .filter(|a| a["type"].as_str() == Some("commit"))
-                    .filter_map(|a| a["text"].as_str())
-                    .collect();
-                if text.is_empty() {
-                    text = fallback;
-                } else {
-                    self.be.call("save_learning", json!({}));
+                let fallback = f.items[idx].text.clone();
+                let res = match f.items[idx].pick {
+                    Pick::Live => self.be.call("process_key", json!({"keysym": KEY_RETURN})),
+                    Pick::Candidate(i) => {
+                        self.be.call("select_candidate", json!({"page_index": i}))
+                    }
                 }
-                self.end_follow();
-                // Mozc still holds the kana: the hybrid exchange reverts it (shadow_command).
-                self.mozc_active = false;
-                self.shadow = true;
-                self.session = inp.id.or(self.session);
-                self.extras.clear();
-                Some(output::encode_command(
-                    raw,
-                    inp.id,
-                    true,
-                    Some(&text),
-                    &Frame::default(),
-                ))
+                .unwrap_or_default();
+                Some(self.commit_follow(raw, inp, &res, fallback))
             }
             // Mozc does not know the id: show the same thing again.
             SC_HIGHLIGHT_CANDIDATE => f.reply.clone(),
@@ -738,13 +841,22 @@ impl<B: Backend> Bridge<B> {
     }
 }
 
-/// The candidates of an engine `KeyResult` (its last `show_candidates`).
-fn shown_candidates(res: &Value) -> Vec<(String, Option<String>)> {
-    let mut items = Vec::new();
+/// XKB Return: commits the composition as the engine shows it.
+const KEY_RETURN: u32 = 0xff0d;
+
+/// What a follow offers for `reading`, from the engine's `KeyResult`: first its live conversion —
+/// a QWERTY composition shows it inline, and here the candidate row is the only place to show
+/// it — then its candidates (the last `show_candidates`), without the live text again.
+fn follow_items(res: &Value, reading: &str) -> Vec<FollowItem> {
+    let mut live = None;
+    let mut cands: Vec<(String, Option<String>)> = Vec::new();
     for a in res["actions"].as_array().into_iter().flatten() {
         match a["type"].as_str() {
+            Some("update_preedit") => {
+                live = a["text"].as_str().map(str::to_string);
+            }
             Some("show_candidates") => {
-                items = a["candidates"]
+                cands = a["candidates"]
                     .as_array()
                     .into_iter()
                     .flatten()
@@ -757,8 +869,27 @@ fn shown_candidates(res: &Value) -> Vec<(String, Option<String>)> {
                     })
                     .collect();
             }
-            Some("hide_candidates") => items.clear(),
+            Some("hide_candidates") => cands.clear(),
             _ => {}
+        }
+    }
+    // The reading itself is no conversion: Mozc's own kana candidate has it.
+    let live = live.filter(|l| !l.is_empty() && l != reading);
+    let mut items: Vec<FollowItem> = live
+        .iter()
+        .map(|l| FollowItem {
+            text: l.clone(),
+            desc: None,
+            pick: Pick::Live,
+        })
+        .collect();
+    for (i, (text, desc)) in cands.into_iter().enumerate() {
+        if live.as_deref() != Some(text.as_str()) {
+            items.push(FollowItem {
+                text,
+                desc,
+                pick: Pick::Candidate(i),
+            });
         }
     }
     items
@@ -768,6 +899,8 @@ fn shown_candidates(res: &Value) -> Vec<(String, Option<String>)> {
 /// and its candidates (ids as Mozc gave them).
 struct MozcView {
     reading: String,
+    /// The preedit's caret is after the last character.
+    caret_at_end: bool,
     converting: bool,
     items: Vec<ListItem>,
     category: u64,
@@ -794,6 +927,9 @@ fn mozc_view(reply: &[u8]) -> Option<MozcView> {
     if reading.is_empty() {
         return None;
     }
+    let caret_at_end = proto::get(&pre, 1)
+        .and_then(|v| v.as_u64())
+        .is_none_or(|c| c as usize == reading.chars().count());
     let mut items = Vec::new();
     let mut category = output::CAT_SUGGESTION;
     if let Some(list) = proto::get(&out, 14)
@@ -830,6 +966,7 @@ fn mozc_view(reply: &[u8]) -> Option<MozcView> {
     }
     Some(MozcView {
         reading,
+        caret_at_end,
         converting,
         items,
         category,

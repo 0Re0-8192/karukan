@@ -22,6 +22,9 @@ pub const SC_MOVE_CURSOR: u32 = 11;
 pub const SC_COMMIT_RAW_TEXT: u32 = 19;
 pub const SC_TURN_ON_IME: u32 = 22;
 pub const SC_TURN_OFF_IME: u32 = 23;
+/// Gboard's 12-key layout sends it when a kana is settled: right after a flick, and a second
+/// after the last tap of a toggle (seen on Gboard 18.4).
+pub const SC_STOP_KEY_TOGGLING: u32 = 25;
 
 // KeyEvent.SpecialKey
 pub const SK_SPACE: u32 = 4;

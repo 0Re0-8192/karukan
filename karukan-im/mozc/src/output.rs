@@ -179,6 +179,42 @@ pub fn replace_candidates(cmd: &[u8], items: &[ListItem], cat: u64) -> Option<Ve
     Some(w.0)
 }
 
+/// `cmd` (a Mozc reply) with its preedit showing `text` as one underlined segment, the caret at
+/// its end; `key` is the reading behind it. Every other field of the preedit and of the reply stays.
+pub fn replace_preedit(cmd: &[u8], text: &str, key: &str) -> Option<Vec<u8>> {
+    let top = proto::parse(cmd)?;
+    let of = proto::parse(proto::get(&top, 2)?.as_bytes()?)?;
+    let pre = proto::parse(proto::get(&of, 5)?.as_bytes()?)?;
+    let len = text.chars().count() as u64;
+    let mut p = W::new();
+    p.uint(1, len);
+    p.group(2, |g| {
+        g.uint(3, ANN_UNDERLINE);
+        g.string(4, text);
+        g.uint(5, len);
+        g.string(6, key);
+    });
+    let kept: Vec<(u32, Val<'_>)> = pre.into_iter().filter(|(f, _)| *f > 3).collect();
+    write_fields(&mut p, &kept);
+    let mut o = W::new();
+    for (f, v) in &of {
+        if *f == 5 {
+            o.bytes(5, &p.0);
+        } else {
+            write_fields(&mut o, &[(*f, *v)]);
+        }
+    }
+    let mut w = W::new();
+    for (f, v) in &top {
+        if *f == 2 {
+            w.bytes(2, &o.0);
+        } else {
+            write_fields(&mut w, &[(*f, *v)]);
+        }
+    }
+    Some(w.0)
+}
+
 /// Serialize `Command{ input = <echo>, output = Output{...} }`.
 pub fn encode_command(
     input_raw: &[u8],

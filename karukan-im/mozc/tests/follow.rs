@@ -14,8 +14,20 @@ fn cands_for(reading: &str) -> Vec<&'static str> {
     match reading {
         "き" => vec!["木", "気"],
         "きょう" => vec!["今日", "京"],
+        "あめ" => vec!["アメリカから", "雨", "飴"],
+        "あめが" => vec!["雨が", "飴が"],
         _ => vec![],
     }
+}
+
+/// The live conversion the engine shows for `reading` (the reading itself when it has none).
+fn live_for(reading: &str) -> String {
+    match reading {
+        "あめ" => "雨",
+        "あめが" => "雨が",
+        r => r,
+    }
+    .to_string()
 }
 
 impl Backend for Fake {
@@ -27,7 +39,8 @@ impl Backend for Fake {
             "set_reading" => {
                 self.reading = params["text"].as_str().unwrap().to_string();
                 let c = cands_for(&self.reading);
-                let mut actions = vec![json!({"type": "update_preedit", "text": self.reading})];
+                let mut actions =
+                    vec![json!({"type": "update_preedit", "text": live_for(&self.reading)})];
                 if !c.is_empty() {
                     actions.push(json!({"type": "show_candidates",
                         "candidates": c.iter().map(|t| json!({"text": t})).collect::<Vec<_>>(),
@@ -38,6 +51,11 @@ impl Backend for Fake {
             "select_candidate" => {
                 let i = params["page_index"].as_u64().unwrap() as usize;
                 let text = cands_for(&self.reading)[i];
+                self.reading.clear();
+                Some(json!({"consumed": true, "actions": [{"type": "commit", "text": text}]}))
+            }
+            "process_key" if params["keysym"] == 0xff0d => {
+                let text = live_for(&self.reading);
                 self.reading.clear();
                 Some(json!({"consumed": true, "actions": [{"type": "commit", "text": text}]}))
             }
@@ -104,7 +122,7 @@ fn mozc_reply(segs: &[(&str, bool)], cands: &[(i64, &str)], focused: bool) -> Ve
     o.bool(3, true);
     if !segs.is_empty() {
         o.message(5, |p| {
-            p.uint(1, 0);
+            p.uint(1, segs.iter().map(|s| s.0.chars().count() as u64).sum());
             for (t, h) in segs {
                 p.group(2, |g| {
                     g.uint(3, if *h { 2 } else { 1 });
@@ -399,4 +417,106 @@ fn pending_romaji_is_not_a_reading() {
     let mut b = bridge();
     assert!(flick(&mut b, "k", "k", &[]).is_none());
     assert!(flick(&mut b, "き", "きk", &[]).is_none());
+}
+
+const STOP_KEY_TOGGLING: u32 = 25;
+
+/// The preedit of a reply, its segments joined.
+fn preedit(cmd: &[u8]) -> String {
+    let o = out_fields(cmd);
+    let pre = proto::parse(&o.iter().find(|(f, _)| *f == 5).expect("preedit").1).unwrap();
+    pre.iter()
+        .filter(|(f, _)| *f == 2)
+        .filter_map(|(_, v)| {
+            let g = proto::parse(v.as_bytes()?)?;
+            proto::get(&g, 4)?.as_str()
+        })
+        .collect()
+}
+
+/// Gboard settles the last kana; Mozc answers with the same composition.
+fn settle(b: &mut Bridge<Fake>, preedit: &str, cands: &[(i64, &str)]) -> Option<Vec<u8>> {
+    let stop = cmd_cmd(STOP_KEY_TOGGLING, None);
+    assert!(b.handle(&stop).is_none());
+    b.observe(&stop, &mozc_reply(&[(preedit, false)], cands, false))
+}
+
+/// Gboard's Enter: the soft keyboard's VIRTUAL_ENTER.
+fn enter_key() -> Vec<u8> {
+    let mut w = W::new();
+    w.message(1, |i| {
+        i.uint(1, 3);
+        i.uint(2, 5);
+        i.message(3, |k| k.uint(3, 74));
+    });
+    w.0
+}
+
+#[test]
+fn the_live_conversion_leads_and_shows_in_the_preedit_once_settled() {
+    let mut b = bridge();
+    flick(&mut b, "あ", "あ", &[]);
+    // The kana may still toggle: Mozc's kana stays in the preedit.
+    let r = flick(&mut b, "め", "あめ", &[(0, "飴")]).unwrap();
+    assert_eq!(preedit(&r), "あめ");
+    assert_eq!(texts(&r), ["雨", "アメリカから", "飴"]);
+    // Settled: the preedit shows the conversion, as a QWERTY composition does.
+    let r = settle(&mut b, "あめ", &[(0, "飴")]).unwrap();
+    assert_eq!(preedit(&r), "雨");
+    // The next kana joins the conversion shown so far until it settles too.
+    let r = flick(&mut b, "が", "あめが", &[]).unwrap();
+    assert_eq!(preedit(&r), "雨が");
+    let r = settle(&mut b, "あめが", &[]).unwrap();
+    assert_eq!(preedit(&r), "雨が");
+}
+
+#[test]
+fn enter_commits_the_conversion_shown() {
+    let mut b = bridge();
+    flick(&mut b, "あ", "あ", &[]);
+    flick(&mut b, "め", "あめ", &[]);
+    settle(&mut b, "あめ", &[]).unwrap();
+    let enter = enter_key();
+    let out = b.handle(&enter).expect("ours");
+    let o = out_fields(&out);
+    let res = proto::parse(&o.iter().find(|(f, _)| *f == 4).expect("result").1).unwrap();
+    assert_eq!(proto::get(&res, 2).unwrap().as_str().unwrap(), "雨");
+    assert!(
+        b.backend()
+            .calls
+            .iter()
+            .any(|c| c.starts_with("save_learning"))
+    );
+    // Mozc's kana is reverted.
+    assert!(b.shadow_command(&enter).is_some());
+}
+
+#[test]
+fn enter_before_anything_is_converted_is_mozcs() {
+    let mut b = bridge();
+    flick(&mut b, "あ", "あ", &[]);
+    assert!(b.handle(&enter_key()).is_none());
+}
+
+#[test]
+fn tapping_the_live_conversion_commits_it_like_enter() {
+    let mut b = bridge();
+    let r = flick(&mut b, "め", "あめ", &[]).unwrap();
+    let tap = cmd_cmd(7, Some(candidates(&r)[0].0));
+    let out = b.handle(&tap).expect("ours");
+    let o = out_fields(&out);
+    let res = proto::parse(&o.iter().find(|(f, _)| *f == 4).expect("result").1).unwrap();
+    assert_eq!(proto::get(&res, 2).unwrap().as_str().unwrap(), "雨");
+    assert!(b.backend().calls.iter().any(|c| c.contains("process_key")));
+    // The candidate after it is the engine's first.
+    let mut b = bridge();
+    let r = flick(&mut b, "め", "あめ", &[]).unwrap();
+    let tap = cmd_cmd(7, Some(candidates(&r)[1].0));
+    b.handle(&tap).expect("ours");
+    assert!(
+        b.backend()
+            .calls
+            .iter()
+            .any(|c| c == r#"select_candidate {"page_index":0}"#)
+    );
 }
