@@ -16,6 +16,8 @@ mod factory;
 #[cfg(windows)]
 mod guids;
 #[cfg(windows)]
+mod langbar;
+#[cfg(windows)]
 mod register;
 #[cfg(windows)]
 mod shared;

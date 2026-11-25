@@ -247,35 +247,14 @@ pub fn run(install: &Path, reading: &str, surface: &str) -> i32 {
         };
         let none = WINDOW_STYLE(0);
         let edit = WINDOW_STYLE(ES_AUTOHSCROLL as u32) | WS_TABSTOP;
-        child(
-            WINDOW_EX_STYLE(0),
-            w!("STATIC"),
-            "よみ",
-            none,
-            14,
-            18,
-            50,
-            22,
-            0,
-        );
-        let r = child(
-            WS_EX_CLIENTEDGE,
-            w!("EDIT"),
-            reading,
-            edit,
-            66,
-            14,
-            250,
-            26,
-            ID_READING,
-        );
+        // 単語 first, then よみ: the order of MS-IME's 単語の登録
         child(
             WINDOW_EX_STYLE(0),
             w!("STATIC"),
             "単語",
             none,
             14,
-            54,
+            18,
             50,
             22,
             0,
@@ -286,10 +265,32 @@ pub fn run(install: &Path, reading: &str, surface: &str) -> i32 {
             surface,
             edit,
             66,
-            50,
+            14,
             250,
             26,
             ID_SURFACE,
+        );
+        child(
+            WINDOW_EX_STYLE(0),
+            w!("STATIC"),
+            "よみ",
+            none,
+            14,
+            54,
+            50,
+            22,
+            0,
+        );
+        let r = child(
+            WS_EX_CLIENTEDGE,
+            w!("EDIT"),
+            reading,
+            edit,
+            66,
+            50,
+            250,
+            26,
+            ID_READING,
         );
         child(
             WINDOW_EX_STYLE(0),
@@ -305,8 +306,8 @@ pub fn run(install: &Path, reading: &str, surface: &str) -> i32 {
         FIELDS.with(|f| f.set((r, s)));
         let _ = ShowWindow(hwnd, SW_SHOW);
         let _ = SetForegroundWindow(hwnd);
-        // the empty field first: a reading from the composition leaves the word to type
-        let _ = SetFocus(Some(if reading.is_empty() || !surface.is_empty() {
+        // the word to type first; with the word given and no reading, the reading
+        let _ = SetFocus(Some(if !surface.is_empty() && reading.is_empty() {
             r
         } else {
             s

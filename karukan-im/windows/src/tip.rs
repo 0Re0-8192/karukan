@@ -14,11 +14,11 @@ use windows::Win32::UI::TextServices::{
     ITfComposition, ITfCompositionSink, ITfCompositionSink_Impl, ITfContext, ITfContextComposition,
     ITfDisplayAttributeInfo, ITfDisplayAttributeProvider, ITfDisplayAttributeProvider_Impl,
     ITfEditSession, ITfEditSession_Impl, ITfInsertAtSelection, ITfKeyEventSink,
-    ITfKeyEventSink_Impl, ITfKeystrokeMgr, ITfRange, ITfTextInputProcessor,
-    ITfTextInputProcessor_Impl, ITfTextInputProcessorEx, ITfTextInputProcessorEx_Impl,
-    ITfThreadMgr, TF_AE_NONE, TF_ANCHOR_END, TF_ANCHOR_START, TF_DEFAULT_SELECTION,
-    TF_ES_ASYNCDONTCARE, TF_ES_READ, TF_ES_READWRITE, TF_ES_SYNC, TF_IAS_QUERYONLY, TF_SELECTION,
-    TF_SELECTIONSTYLE,
+    ITfKeyEventSink_Impl, ITfKeystrokeMgr, ITfLangBarItem, ITfLangBarItemButton, ITfLangBarItemMgr,
+    ITfRange, ITfTextInputProcessor, ITfTextInputProcessor_Impl, ITfTextInputProcessorEx,
+    ITfTextInputProcessorEx_Impl, ITfThreadMgr, TF_AE_NONE, TF_ANCHOR_END, TF_ANCHOR_START,
+    TF_DEFAULT_SELECTION, TF_ES_ASYNCDONTCARE, TF_ES_READ, TF_ES_READWRITE, TF_ES_SYNC,
+    TF_IAS_QUERYONLY, TF_SELECTION, TF_SELECTIONSTYLE,
 };
 use windows::core::{
     BOOL, BOOL as CoreBool, GUID, IUnknownImpl, Interface, Ref, Result, implement,
@@ -54,6 +54,11 @@ pub struct State {
     aux: Option<String>,
     composition: Option<ITfComposition>,
     has_preedit: bool,
+    /// The taskbar's あ / A button, while the service is active
+    mode_button: Option<(
+        windows::core::ComObject<crate::langbar::ModeButton>,
+        ITfLangBarItemMgr,
+    )>,
     /// The composition text last written, to tell a text change from a
     /// caret move (`caret_after_text_change`).
     shown_text: String,
@@ -81,6 +86,7 @@ impl State {
             aux: None,
             composition: None,
             has_preedit: false,
+            mode_button: None,
             shown_text: String::new(),
             caret_retry: None,
             anchor_provisional: false,
@@ -846,6 +852,36 @@ unsafe fn set_caret(ec: u32, ctx: &ITfContext, range: &ITfRange, units: i32) -> 
     }
 }
 
+/// Tell the taskbar button the IME went on or off.
+fn notify_mode(state: &Rc<RefCell<State>>) {
+    let button = state.borrow().mode_button.as_ref().map(|(b, _)| b.clone());
+    if let Some(b) = button {
+        crate::langbar::notify(&b);
+    }
+}
+
+/// Commit what is being composed (the IME turned off from the taskbar), in
+/// an asynchronous session: a click is not a key event.
+fn commit_pending(state: &Rc<RefCell<State>>, sink: &ITfCompositionSink) {
+    let (res, ctx) = {
+        let mut st = state.borrow_mut();
+        let ctx = st.context.clone();
+        let has_preedit = st.has_preedit;
+        let res = st
+            .engine
+            .as_mut()
+            .filter(|_| has_preedit)
+            .and_then(|e| e.is_alive().then(|| e.commit()).flatten());
+        st.typed.clear();
+        st.aux = None;
+        (res, ctx)
+    };
+    if let (Some(res), Some(ctx)) = (res, ctx) {
+        request_session(state, &ctx, res.actions, sink, false);
+    }
+    cand::hide();
+}
+
 /// Ctrl+F7 (no Alt or Shift): MS-IME's word registration key.
 fn is_word_key(vk: u32) -> bool {
     use windows::Win32::UI::Input::KeyboardAndMouse::GetKeyState;
@@ -1026,7 +1062,44 @@ impl TextService_Impl {
         cand::set_on_pick(Some(Box::new(move |index| {
             pick_candidate(&state, &sink, index)
         })));
+        let tm = self.state.borrow().thread_mgr.clone();
+        if let Some(tm) = tm {
+            self.add_mode_button(&tm);
+        }
         Ok(())
+    }
+
+    /// The taskbar's あ / A button: left click toggles the IME, right click
+    /// opens the menu with 単語の登録 (where MS-IME users register words).
+    fn add_mode_button(&self, tm: &ITfThreadMgr) {
+        let Ok(mgr) = tm.cast::<ITfLangBarItemMgr>() else {
+            return;
+        };
+        let (s1, s2, s3) = (self.state.clone(), self.state.clone(), self.state.clone());
+        let sink = self.sink();
+        let hooks = crate::langbar::Hooks {
+            is_open: Box::new(move || s1.borrow().open),
+            toggle: Box::new(move || {
+                let was_open = s2.borrow().open;
+                if was_open {
+                    commit_pending(&s2, &sink);
+                }
+                s2.borrow_mut().open = !was_open;
+                notify_mode(&s2);
+            }),
+            register_word: Box::new(move || open_word_window(&s3)),
+            owner: Box::new(cand::owner_window),
+        };
+        let button = windows::core::ComObject::new(crate::langbar::ModeButton::new(hooks));
+        let button_if: ITfLangBarItemButton = button.to_interface();
+        let Ok(item) = button_if.cast::<ITfLangBarItem>() else {
+            return;
+        };
+        if unsafe { mgr.AddItem(&item) }.is_ok() {
+            self.state.borrow_mut().mode_button = Some((button, mgr));
+        } else {
+            dbg_log("langbar AddItem failed");
+        }
     }
 
     fn sink(&self) -> ITfCompositionSink {
@@ -1075,6 +1148,7 @@ impl TextService_Impl {
                 self.flush();
             }
             self.state.borrow_mut().open = !was_open;
+            notify_mode(&self.state);
             return true;
         }
         // Ctrl+F7: register a word (MS-IME's key), the composition's reading
@@ -1087,6 +1161,7 @@ impl TextService_Impl {
         if !open {
             if vk == keymap::VK_CONVERT {
                 self.state.borrow_mut().open = true;
+                notify_mode(&self.state);
                 return true;
             }
             return false;
@@ -1111,6 +1186,7 @@ impl TextService_Impl {
                     return true; // swallowed until the MS-IME conversion cycle exists
                 }
                 self.state.borrow_mut().open = false;
+                notify_mode(&self.state);
                 return true;
             }
             _ => {
@@ -1254,6 +1330,12 @@ impl ITfTextInputProcessor_Impl for TextService_Impl {
         st.has_preedit = false;
         st.thread_mgr = None;
         st.engine = None; // closes stdin: the server saves its learning cache
+        if let Some((button, mgr)) = st.mode_button.take() {
+            let button_if: ITfLangBarItemButton = button.to_interface();
+            if let Ok(item) = button_if.cast::<ITfLangBarItem>() {
+                let _ = unsafe { mgr.RemoveItem(&item) };
+            }
+        }
         cand::set_on_pick(None);
         cand::destroy();
         Ok(())

@@ -423,6 +423,11 @@ fn draw(mem: HDC, cw: i32, ch: i32) {
     });
 }
 
+/// A window of this thread for a popup menu to belong to.
+pub fn owner_window() -> Option<HWND> {
+    ensure_window()
+}
+
 fn ensure_window() -> Option<HWND> {
     if let Some(h) = HWND_CAND.with(|h| *h.borrow()) {
         return Some(h);

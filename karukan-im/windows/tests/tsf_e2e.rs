@@ -208,3 +208,21 @@ fn the_text_left_of_the_caret_is_readable() {
     }
     assert!(h.text().ends_with("きょう"), "{:?}", h.text());
 }
+
+#[test]
+fn the_taskbar_button_follows_the_mode() {
+    use windows::Win32::UI::TextServices::{
+        GUID_LBI_INPUTMODE, ITfLangBarItemButton, ITfLangBarItemMgr,
+    };
+    let Some(h) = setup() else { return };
+    let mgr: ITfLangBarItemMgr = h._tm.cast().expect("ITfLangBarItemMgr");
+    let item = unsafe { mgr.GetItem(&GUID_LBI_INPUTMODE) }.expect("the mode button is added");
+    let button: ITfLangBarItemButton = item.cast().expect("a button");
+    assert_eq!(unsafe { button.GetText() }.unwrap().to_string(), "あ");
+    assert!(!unsafe { button.GetIcon() }.unwrap().is_invalid());
+    // 半角/全角 turns the IME off; the button says so
+    assert!(h.key(0xF3));
+    assert_eq!(unsafe { button.GetText() }.unwrap().to_string(), "A");
+    assert!(h.key(0xF3));
+    assert_eq!(unsafe { button.GetText() }.unwrap().to_string(), "あ");
+}
