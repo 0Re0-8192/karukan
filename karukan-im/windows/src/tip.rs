@@ -177,22 +177,17 @@ fn engine_key(shared: bool) -> Option<String> {
 
 /// Newest modification time among the files the server loads at start-up
 /// (portable layout only; elsewhere the data directory is not ours to watch).
-/// `user_english.txt` is left out: the server picks up new words by itself, and
-/// counting it restarted every app's server each time a word was learned.
+/// `user_english.txt` and the user dictionaries are left out: the server
+/// picks up new words in either by itself, and counting them restarted every
+/// app's server each time a word was learned or registered (Ctrl+F7).
 fn data_stamp() -> Option<std::time::SystemTime> {
     let dir = crate::dll_dir()?;
     if !dir.join("portable.flag").exists() {
         return None;
     }
-    let data = dir.join("data");
-    let mtime = |p: &std::path::Path| std::fs::metadata(p).and_then(|m| m.modified()).ok();
-    let mut newest = mtime(&data.join("dict.bin"));
-    if let Ok(rd) = std::fs::read_dir(data.join("user_dicts")) {
-        for f in rd.flatten() {
-            newest = newest.max(mtime(&f.path()));
-        }
-    }
-    newest
+    std::fs::metadata(dir.join("data").join("dict.bin"))
+        .and_then(|m| m.modified())
+        .ok()
 }
 
 fn server_exe(dir: &std::path::Path) -> PathBuf {
@@ -851,6 +846,43 @@ unsafe fn set_caret(ec: u32, ctx: &ITfContext, range: &ITfRange, units: i32) -> 
     }
 }
 
+/// Ctrl+F7 (no Alt or Shift): MS-IME's word registration key.
+fn is_word_key(vk: u32) -> bool {
+    use windows::Win32::UI::Input::KeyboardAndMouse::GetKeyState;
+    let down = |k: u32| unsafe { GetKeyState(k as i32) } < 0;
+    vk == 0x76 && down(keymap::VK_CONTROL) && !down(keymap::VK_MENU) && !down(keymap::VK_SHIFT)
+}
+
+/// The word registration window (`karukan-setup.exe --word`, a process of
+/// its own), its reading filled in from the composition: the typed keys as
+/// kana, and the word with what the composition shows when that differs.
+fn open_word_window(state: &Rc<RefCell<State>>) {
+    let Some(dir) = crate::dll_dir() else { return };
+    let exe = dir.join("karukan-setup.exe");
+    let (reading, surface) = {
+        let st = state.borrow();
+        if st.has_preedit {
+            let shown = st.shown_text.clone();
+            let surface = if shown != st.typed {
+                shown
+            } else {
+                String::new()
+            };
+            (st.typed.clone(), surface)
+        } else {
+            (String::new(), String::new())
+        }
+    };
+    let args = format!(
+        "--word --reading {} --surface {}",
+        crate::shared::quote_arg(&reading),
+        crate::shared::quote_arg(&surface)
+    );
+    if let Err(e) = crate::shared::spawn_with_args(&exe, &args, &[]) {
+        diag(&format!("word window: {e}"));
+    }
+}
+
 /// A click on the candidate at `index` on the page: committed like Ctrl+digit,
 /// in an asynchronous session (a click is not a key event, so the host may
 /// refuse a synchronous one).
@@ -1045,6 +1077,12 @@ impl TextService_Impl {
             self.state.borrow_mut().open = !was_open;
             return true;
         }
+        // Ctrl+F7: register a word (MS-IME's key), the composition's reading
+        // filled in
+        if is_word_key(vk) {
+            open_word_window(&self.state);
+            return true;
+        }
         let open = self.state.borrow().open;
         if !open {
             if vk == keymap::VK_CONVERT {
@@ -1161,7 +1199,7 @@ impl TextService_Impl {
 
     /// Cheap prediction used by OnTestKeyDown (no engine round trip).
     fn would_eat(&self, vk: u32, lparam: LPARAM) -> bool {
-        if keymap::is_open_close_vk(vk) {
+        if keymap::is_open_close_vk(vk) || is_word_key(vk) {
             return true;
         }
         let (open, has_preedit) = {

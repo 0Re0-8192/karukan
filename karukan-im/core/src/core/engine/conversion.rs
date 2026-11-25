@@ -148,9 +148,14 @@ impl InputMethodEngine {
         // returns to an editable buffer with the romaji tail still live.
         let reading = self.input_buf.settled_reading(&self.converters.romaji);
         // The unresolved tail keeps narrowing the predictive dictionary
-        // lookup (わせd → 早稲田 stays selectable).
-        let base = self.input_buf.reading();
-        let pending = self.input_buf.pending();
+        // lookup (わせd → 早稲田 stays selectable) — unless settling resolves
+        // it (`kan`: the lone n is ん), when the settled reading is looked up
+        // whole, so かん is an exact match, not a prediction from か + `n`.
+        let (base, pending) = if self.pending_settles_differently() {
+            (reading.clone(), String::new())
+        } else {
+            (self.input_buf.reading(), self.input_buf.pending())
+        };
 
         // Snapshot the live-conversion text before clearing it, so the
         // displayed candidate survives even if re-inference diverges.

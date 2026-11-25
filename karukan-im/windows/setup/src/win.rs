@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 mod sys;
+mod word;
 
 const MAGIC: &[u8; 16] = b"KARUKAN-SETUP-01";
 const FOOTER: u64 = 16 + 8 + 32;
@@ -31,6 +32,8 @@ struct Opts {
     uninstall: bool,
     delete_data: bool,
     pack: Option<(PathBuf, PathBuf)>,
+    /// `--word`: the word registration window, prefilled
+    word: Option<(String, String)>,
 }
 
 fn parse_args() -> Result<Opts> {
@@ -43,6 +46,15 @@ fn parse_args() -> Result<Opts> {
             "--quiet" => o.quiet = true,
             "--uninstall" => o.uninstall = true,
             "--delete-data" => o.delete_data = true,
+            "--word" => {
+                o.word.get_or_insert_default();
+            }
+            "--reading" => {
+                o.word.get_or_insert_default().0 = it.next().unwrap_or_default();
+            }
+            "--surface" => {
+                o.word.get_or_insert_default().1 = it.next().unwrap_or_default();
+            }
             "pack" => {
                 let stage = PathBuf::from(it.next().context("pack STAGE_DIR -o OUT.exe")?);
                 if it.next().as_deref() != Some("-o") {
@@ -67,6 +79,16 @@ pub fn main() -> i32 {
             return 2;
         }
     };
+    if let Some((reading, surface)) = &o.word {
+        // registered beside this exe: the install folder
+        let Some(install) = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(Path::to_path_buf))
+        else {
+            return 2;
+        };
+        return word::run(&install, reading, surface);
+    }
     let quiet = o.quiet || o.pack.is_some();
     let r = if let Some((stage, out)) = &o.pack {
         pack(stage, out)

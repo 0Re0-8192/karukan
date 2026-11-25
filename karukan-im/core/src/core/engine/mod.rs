@@ -666,6 +666,8 @@ impl InputMethodEngine {
         // A new word: take the English words other apps learned meanwhile.
         if matches!(self.state, InputState::Empty) {
             self.corrections.reload_if_changed();
+            // and the words registered meanwhile
+            self.reload_user_dictionaries_if_changed();
         }
 
         // Log modifier key events for debugging key mapping issues

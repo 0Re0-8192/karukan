@@ -10,14 +10,62 @@ use crate::config::settings::StrategyMode;
 
 use super::*;
 
-/// Process-global cache of the merged user dictionary.
+/// Process-global cache of the merged user dictionary, keyed by what the
+/// directory held when it was read (`DirStamp`).
 ///
 /// The merged dictionary (potentially several large TSVs) takes seconds to
 /// load and merge. Karukan creates one engine per input context; without
 /// this cache, every new context (window/field switch) re-read and
-/// re-merged all dictionaries.
-static USER_DICT_CACHE: std::sync::OnceLock<Option<std::sync::Arc<Dictionary>>> =
-    std::sync::OnceLock::new();
+/// re-merged all dictionaries. Keyed rather than set once, so a word
+/// registered while the server runs is read in place: the first engine to
+/// see the directory change reloads it, the others find it cached.
+static USER_DICT_CACHE: std::sync::Mutex<Option<(DirStamp, Option<std::sync::Arc<Dictionary>>)>> =
+    std::sync::Mutex::new(None);
+
+/// How often an engine looks at the user dictionary directory for changes.
+const USER_DICT_CHECK: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// The files of a user dictionary directory, sorted, each with its size and
+/// modification time: equal stamps mean nothing to reload.
+pub(in crate::core) type DirStamp = Vec<(std::path::PathBuf, u64, Option<std::time::SystemTime>)>;
+
+fn dir_stamp(dir: &std::path::Path) -> DirStamp {
+    let mut files: DirStamp = std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| {
+            let m = e.metadata().ok()?;
+            m.is_file().then(|| (e.path(), m.len(), m.modified().ok()))
+        })
+        .collect();
+    files.sort();
+    files
+}
+
+/// Load and merge the files of `stamp`, earlier names first.
+fn load_user_dicts(stamp: &DirStamp) -> Option<std::sync::Arc<Dictionary>> {
+    let mut dicts = Vec::new();
+    for (path, _, _) in stamp {
+        match Dictionary::load_auto(path) {
+            Ok(dict) => {
+                debug!("User dictionary loaded from {:?}", path);
+                dicts.push(dict);
+            }
+            Err(e) => debug!("Failed to load user dictionary from {:?}: {}", path, e),
+        }
+    }
+    if dicts.is_empty() {
+        return None;
+    }
+    match Dictionary::merge(dicts) {
+        Ok(merged) => merged.map(std::sync::Arc::new),
+        Err(e) => {
+            debug!("Failed to merge user dictionaries: {}", e);
+            None
+        }
+    }
+}
 
 /// Process-global cache of the system dictionary, keyed by its path: a server
 /// shared by every app holds one engine per app, and reading the 200 MB
@@ -277,78 +325,65 @@ impl InputMethodEngine {
         if self.dicts.user.is_some() {
             return;
         }
-
-        if let Some(cached) = USER_DICT_CACHE.get() {
-            debug!("User dictionaries resolved from process-level cache (no reload)");
-            self.dicts.user = cached.clone();
-            return;
-        }
-
         let Some(dir) = Settings::user_dict_dir() else {
             debug!("Could not determine user dictionary directory");
             return;
         };
+        self.load_user_dictionaries_from(&dir);
+    }
 
-        if !dir.exists() {
-            debug!(
-                "User dictionary directory {:?} does not exist, skipping",
-                dir
-            );
-            return;
-        }
+    /// Take the dictionaries `dir` holds now, from the process-global cache
+    /// when another engine already read this state of the directory.
+    pub(super) fn load_user_dictionaries_from(&mut self, dir: &std::path::Path) {
+        let stamp = dir_stamp(dir);
+        let mut cache = USER_DICT_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+        let user = match cache.as_ref() {
+            Some((cached, user)) if *cached == stamp => user.clone(),
+            _ => {
+                let user = load_user_dicts(&stamp);
+                debug!(
+                    "User dictionaries read from {:?} ({} files)",
+                    dir,
+                    stamp.len()
+                );
+                *cache = Some((stamp.clone(), user.clone()));
+                user
+            }
+        };
+        self.dicts.user = user;
+        self.dicts.user_dir = Some(dir.to_path_buf());
+        self.dicts.user_stamp = Some(stamp);
+    }
 
-        let Ok(entries) = std::fs::read_dir(&dir) else {
-            debug!("Failed to read user dictionary directory {:?}", dir);
+    /// A word registered while the server runs: when the user dictionary
+    /// directory changed since it was read (looked at every couple of
+    /// seconds, between words), read it again — no server restart.
+    pub(super) fn reload_user_dictionaries_if_changed(&mut self) {
+        // the directory they were read from: an engine that never read them
+        // (tests, dictionary-less engines) looks at nothing
+        let Some(dir) = self.dicts.user_dir.clone() else {
             return;
         };
-        let mut paths: Vec<std::path::PathBuf> = entries
-            .filter_map(|e| e.ok())
-            .map(|e| e.path())
-            .filter(|p| p.is_file())
-            .collect();
+        self.reload_user_dictionaries_in(&dir);
+    }
 
-        if paths.is_empty() {
-            debug!("No files in user dictionary directory {:?}", dir);
+    pub(super) fn reload_user_dictionaries_in(&mut self, dir: &std::path::Path) {
+        // only an engine that read them: tests and dictionary-less engines
+        // never pick up a directory of the machine they run on
+        if self.dicts.user_stamp.is_none() {
             return;
         }
-
-        // Sort for deterministic load order (alphabetical)
-        paths.sort();
-
-        let mut dicts = Vec::new();
-        for path in &paths {
-            match Dictionary::load_auto(path) {
-                Ok(dict) => {
-                    debug!("User dictionary loaded from {:?}", path);
-                    dicts.push(dict);
-                }
-                Err(e) => {
-                    debug!("Failed to load user dictionary from {:?}: {}", path, e);
-                }
-            }
-        }
-
-        if dicts.is_empty() {
+        if self
+            .dicts
+            .user_checked
+            .is_some_and(|t| t.elapsed() < USER_DICT_CHECK)
+        {
             return;
         }
-
-        match Dictionary::merge(dicts) {
-            Ok(Some(merged)) => {
-                debug!(
-                    "User dictionaries merged successfully ({} files from {:?})",
-                    paths.len(),
-                    dir
-                );
-                let merged = std::sync::Arc::new(merged);
-                self.dicts.user = Some(merged.clone());
-                let _ = USER_DICT_CACHE.set(Some(merged));
-            }
-            Ok(None) => {
-                let _ = USER_DICT_CACHE.set(None);
-            }
-            Err(e) => {
-                debug!("Failed to merge user dictionaries: {}", e);
-            }
+        self.dicts.user_checked = Some(std::time::Instant::now());
+        if self.dicts.user_stamp.as_ref() == Some(&dir_stamp(dir)) {
+            return;
         }
+        self.load_user_dictionaries_from(dir);
     }
 }

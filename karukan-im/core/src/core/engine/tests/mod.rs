@@ -31,6 +31,7 @@ mod single_kanji;
 mod source_filter;
 mod strategy;
 mod surrounding;
+mod user_dict;
 mod width;
 
 /// Engine seeded with a learning entry `reading ↁEsurface`, no kanji model.

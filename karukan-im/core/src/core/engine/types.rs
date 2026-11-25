@@ -334,6 +334,11 @@ pub(in crate::core) struct Dictionaries {
     pub system: Option<std::sync::Arc<Dictionary>>,
     /// User dictionary (merged from user_dict_paths)
     pub user: Option<std::sync::Arc<Dictionary>>,
+    /// The directory `user` was read from, and what it held then
+    pub user_dir: Option<std::path::PathBuf>,
+    pub user_stamp: Option<super::init::DirStamp>,
+    /// When the directory was last looked at for changes
+    pub user_checked: Option<std::time::Instant>,
 }
 
 /// Conversion model dispatch strategy based on input length

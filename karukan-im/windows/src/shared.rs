@@ -110,7 +110,39 @@ pub fn pipe_exists(name: &str) -> bool {
 /// from ever seeing EOF), and out of the app's job when the job allows it, so the
 /// server outlives the app that happened to start it.
 pub fn spawn_detached(exe: &Path, name: &str, envs: &[(String, String)]) -> std::io::Result<()> {
-    let mut cmd: Vec<u16> = format!("\"{}\" --pipe {name}", exe.display())
+    spawn_with_args(exe, &format!("--pipe {name}"), envs)
+}
+
+/// One argument quoted for a Windows command line (the rules
+/// `CommandLineToArgvW` reads it back with).
+pub fn quote_arg(arg: &str) -> String {
+    let mut out = String::from("\"");
+    let mut slashes = 0;
+    for c in arg.chars() {
+        match c {
+            '\\' => slashes += 1,
+            '"' => {
+                out.extend(std::iter::repeat_n('\\', slashes * 2 + 1));
+                slashes = 0;
+            }
+            _ => {
+                out.extend(std::iter::repeat_n('\\', slashes));
+                slashes = 0;
+            }
+        }
+        if c != '\\' {
+            out.push(c);
+        }
+    }
+    out.extend(std::iter::repeat_n('\\', slashes * 2));
+    out.push('"');
+    out
+}
+
+/// Start `exe args` on its own: no handles inherited, out of the app's job,
+/// run from the exe's folder.
+pub fn spawn_with_args(exe: &Path, args: &str, envs: &[(String, String)]) -> std::io::Result<()> {
+    let mut cmd: Vec<u16> = format!("\"{}\" {args}", exe.display())
         .encode_utf16()
         .chain([0])
         .collect();
@@ -160,6 +192,15 @@ pub fn spawn_detached(exe: &Path, name: &str, envs: &[(String, String)]) -> std:
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn arguments_survive_the_command_line() {
+        assert_eq!(quote_arg("かるかん"), "\"かるかん\"");
+        assert_eq!(quote_arg("a b"), "\"a b\"");
+        assert_eq!(quote_arg("say \"hi\""), "\"say \\\"hi\\\"\"");
+        assert_eq!(quote_arg("C:\\dir\\"), "\"C:\\dir\\\\\"");
+        assert_eq!(quote_arg(""), "\"\"");
+    }
 
     /// `eligible` agrees with the integrity label `whoami` reports for this process.
     #[test]

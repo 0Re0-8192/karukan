@@ -12,6 +12,7 @@
 //!   karukan-setup.exe                         install or update (dialogs)
 //!   karukan-setup.exe --uninstall [--delete-data]
 //!   karukan-setup.exe pack STAGE_DIR -o OUT.exe
+//!   karukan-setup.exe --word [--reading R] [--surface S]   word registration window (Ctrl+F7)
 //! Test switches: --dir PATH (install there), --no-register (no regsvr32, input list or Apps entry),
 //! --quiet (no dialogs).
 #![cfg_attr(windows, windows_subsystem = "windows")]
