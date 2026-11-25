@@ -47,7 +47,9 @@ fn build_candidates_omits_learning_when_skipped() {
 #[test]
 fn tab_key_skips_learning_in_composing() {
     // End-to-end: type the reading, press Tab → learned candidate is gone.
+    // With no suggestion list on screen: with one, Tab steps into it.
     let mut engine = engine_with_learned("あい", "藍");
+    engine.config.candidate_window = crate::config::settings::CandidateWindow::Conversion;
 
     engine.process_key(&press('a'));
     engine.process_key(&press('i'));

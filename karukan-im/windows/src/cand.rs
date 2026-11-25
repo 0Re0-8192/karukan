@@ -24,8 +24,8 @@ use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, GetClientRect, GetWindowRect, HWND_TOPMOST,
     IsWindowVisible, MA_NOACTIVATE, RegisterClassExW, SW_HIDE, SWP_NOACTIVATE, SWP_SHOWWINDOW,
-    SetWindowPos, ShowWindow, WM_ERASEBKGND, WM_MOUSEACTIVATE, WM_PAINT, WNDCLASS_STYLES,
-    WNDCLASSEXW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+    SetWindowPos, ShowWindow, WM_ERASEBKGND, WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_PAINT,
+    WNDCLASS_STYLES, WNDCLASSEXW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
 use windows::core::{PCWSTR, w};
 
@@ -170,9 +170,53 @@ fn ensure_fonts(scale: f32) -> (HFONT, HFONT) {
     })
 }
 
+/// What a click on the candidate row at an index on the page does.
+pub type OnPick = Box<dyn Fn(usize)>;
+
+thread_local! {
+    /// Set by the text service.
+    static ON_PICK: RefCell<Option<OnPick>> = const { RefCell::new(None) };
+}
+
+/// Have a click on the row at `index` on the page call `f`; `None` stops it.
+pub fn set_on_pick(f: Option<OnPick>) {
+    ON_PICK.with(|p| *p.borrow_mut() = f);
+}
+
+/// The candidate row at client `y`, if any (the same layout `paint` draws).
+fn row_at(y: i32) -> Option<usize> {
+    VIEW.with(|v| {
+        let v = v.borrow();
+        if v.row_h <= 0 {
+            return None;
+        }
+        let rows_top = px(4, v.scale) + if v.flipped { 0 } else { v.typed_h };
+        let i = (y - rows_top).div_euclid(v.row_h);
+        (y >= rows_top && (i as usize) < v.rows.len()).then_some(i as usize)
+    })
+}
+
 unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     match msg {
         WM_MOUSEACTIVATE => LRESULT(MA_NOACTIVATE as isize),
+        WM_LBUTTONUP => {
+            // the window never takes focus, so the app keeps typing into the field
+            let y = ((lp.0 >> 16) & 0xffff) as i16 as i32;
+            if let Some(i) = row_at(y) {
+                // released before calling out: the pick re-renders this window
+                let pick = ON_PICK.with(|p| p.borrow_mut().take());
+                if let Some(f) = pick {
+                    f(i);
+                    ON_PICK.with(|p| {
+                        let mut slot = p.borrow_mut();
+                        if slot.is_none() {
+                            *slot = Some(f);
+                        }
+                    });
+                }
+            }
+            LRESULT(0)
+        }
         WM_ERASEBKGND => LRESULT(1),
         WM_PAINT => {
             unsafe { paint(hwnd) };
@@ -845,5 +889,35 @@ mod placement_tests {
         assert_eq!(short.0, 1340 - 68 - 2);
         // with room below, both go below
         assert_eq!(place_y(400, 423, 68, 340, (0, 1440), 2), (423, false));
+    }
+}
+
+#[cfg(test)]
+mod click_tests {
+    use super::*;
+
+    fn item(t: &str) -> CandidateItem {
+        CandidateItem {
+            text: t.into(),
+            description: None,
+        }
+    }
+
+    #[test]
+    fn a_click_finds_the_row_drawn_there() {
+        let items = [item("ただ"), item("例えば"), item("他")];
+        // laid out the way the window draws it, typed-keys row on top
+        render_preview(&items, 0, 0, 1, None, Some("た".into()), false, 1.0);
+        let (top, row_h) = VIEW.with(|v| {
+            let v = v.borrow();
+            (px(4, v.scale) + v.typed_h, v.row_h)
+        });
+        assert!(row_h > 0);
+        assert_eq!(row_at(top + 1), Some(0));
+        assert_eq!(row_at(top + row_h + row_h / 2), Some(1));
+        assert_eq!(row_at(top + 2 * row_h + 1), Some(2));
+        // the typed-keys row and below the last row are not candidates
+        assert_eq!(row_at(top - 1), None);
+        assert_eq!(row_at(top + 3 * row_h + 1), None);
     }
 }

@@ -265,6 +265,12 @@ impl EngineClient {
         serde_json::from_value(v).ok()
     }
 
+    /// Commit the candidate at `page_index` on the page on screen (a click).
+    pub fn select_candidate(&mut self, page_index: usize) -> Option<KeyResult> {
+        let v = self.send("select_candidate", json!({"page_index": page_index}), true)?;
+        serde_json::from_value(v).ok()
+    }
+
     pub fn commit(&mut self) -> Option<KeyResult> {
         serde_json::from_value(self.send("commit", json!({}), true)?).ok()
     }

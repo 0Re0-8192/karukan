@@ -851,6 +851,28 @@ unsafe fn set_caret(ec: u32, ctx: &ITfContext, range: &ITfRange, units: i32) -> 
     }
 }
 
+/// A click on the candidate at `index` on the page: committed like Ctrl+digit,
+/// in an asynchronous session (a click is not a key event, so the host may
+/// refuse a synchronous one).
+fn pick_candidate(state: &Rc<RefCell<State>>, sink: &ITfCompositionSink, index: usize) {
+    let (res, ctx) = {
+        let mut st = state.borrow_mut();
+        let ctx = st.context.clone();
+        let res = st
+            .engine
+            .as_mut()
+            .and_then(|e| e.is_alive().then(|| e.select_candidate(index)).flatten());
+        if res.is_some() {
+            st.typed.clear();
+            st.aux = None;
+        }
+        (res, ctx)
+    };
+    if let (Some(res), Some(ctx)) = (res, ctx) {
+        request_session(state, &ctx, res.actions, sink, false);
+    }
+}
+
 /// Sets the caret again, alone (see `update_preedit`).
 #[implement(ITfEditSession)]
 struct CaretSession {
@@ -967,6 +989,11 @@ impl TextService_Impl {
             st.open = true;
         }
         prewarm_shared();
+        let state = self.state.clone();
+        let sink = self.sink();
+        cand::set_on_pick(Some(Box::new(move |index| {
+            pick_candidate(&state, &sink, index)
+        })));
         Ok(())
     }
 
@@ -1189,6 +1216,7 @@ impl ITfTextInputProcessor_Impl for TextService_Impl {
         st.has_preedit = false;
         st.thread_mgr = None;
         st.engine = None; // closes stdin: the server saves its learning cache
+        cand::set_on_pick(None);
         cand::destroy();
         Ok(())
     }

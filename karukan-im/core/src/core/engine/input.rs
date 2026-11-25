@@ -313,6 +313,11 @@ impl InputMethodEngine {
             // Tab triggers conversion that bypasses the learning cache, so users
             // can escape stale or unwanted learned entries (mozc binds Tab to a
             // different conversion path — PredictAndConvert — in the same spirit).
+            // Tab steps into the suggestion list on screen (Google IME's
+            // predictive Tab): its first entry selected, Tab/↓ walk it, Enter
+            // commits. With no list on screen it converts without the
+            // learning cache, as before.
+            Keysym::TAB if !self.shown_suggestions.is_empty() => self.enter_suggestions(),
             Keysym::TAB => self.start_conversion(LearningLookup::Skip),
             Keysym::SPACE | Keysym::DOWN => self.start_conversion(LearningLookup::Use),
             Keysym::LEFT => self.move_caret_left(),
@@ -375,6 +380,17 @@ impl InputMethodEngine {
                 }
             }
         }
+    }
+
+    /// Make the composing suggestion list on screen the conversion list,
+    /// its first entry selected. Each entry carries its own reading, so a
+    /// predictive one (例えば under た) is learned under its full reading.
+    fn enter_suggestions(&mut self) -> EngineResult {
+        let mut list = self.shown_suggestions.clone();
+        list.set_cursor(0);
+        let reading = self.input_buf.settled_reading(&self.converters.romaji);
+        self.live.shown = false;
+        self.enter_conversion_state(&reading, list)
     }
 
     /// Begin a new emoji-shortcode composing session.

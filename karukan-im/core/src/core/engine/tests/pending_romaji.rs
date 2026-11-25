@@ -308,3 +308,45 @@ fn a_pending_tail_suggests_no_variants_of_the_kana_before_it() {
         "{shown:?}"
     );
 }
+
+#[test]
+fn tab_steps_into_the_suggestions_on_screen() {
+    // Google IME's predictive Tab: the list shown while typing becomes the
+    // one Tab walks, and Enter commits the entry picked there
+    let mut engine = engine_with_learned("たとえば", "例えば");
+    engine.learning.as_mut().unwrap().record("ただ", "ただ");
+    send(&mut engine, "ta");
+    let shown: Vec<String> = engine
+        .shown_suggestions
+        .candidates()
+        .iter()
+        .map(|c| c.text.clone())
+        .collect();
+    assert!(shown.iter().any(|t| t == "例えば"), "{shown:?}");
+    send(&mut engine, "↹");
+    assert!(matches!(engine.state(), InputState::Conversion { .. }));
+    let list: Vec<String> = engine
+        .state()
+        .candidates()
+        .unwrap()
+        .candidates()
+        .iter()
+        .map(|c| c.text.clone())
+        .collect();
+    assert_eq!(list, shown);
+    let at = shown.iter().position(|t| t == "例えば").unwrap();
+    for _ in 0..at {
+        send(&mut engine, "↹");
+    }
+    let r = engine.process_key(&press_key(Keysym::RETURN));
+    assert_eq!(commit_of(&r).as_deref(), Some("例えば"));
+    // learned under its own reading
+    assert!(
+        !engine
+            .learning
+            .as_ref()
+            .unwrap()
+            .lookup("たとえば")
+            .is_empty()
+    );
+}
