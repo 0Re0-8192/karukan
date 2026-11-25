@@ -113,12 +113,7 @@ fn tap_key(digit: char) -> Vec<u8> {
 }
 
 /// One tap that Mozc composes into `preedit`: the reply as amended.
-fn tap(
-    b: &mut Bridge<Fake>,
-    digit: char,
-    preedit: &str,
-    cands: &[(i64, &str)],
-) -> Option<Vec<u8>> {
+fn tap(b: &mut Bridge<Fake>, digit: char, preedit: &str, cands: &[(i64, &str)]) -> Option<Vec<u8>> {
     let key = tap_key(digit);
     assert!(b.handle(&key).is_none(), "Mozc composes the kana");
     assert!(b.shadow_revert(&key).is_none());
