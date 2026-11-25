@@ -373,17 +373,14 @@ fn guard<T>(default: T, f: impl FnOnce() -> T) -> T {
 }
 
 /// Why a key was lost, written to `debug.log` beside the DLL while a
-/// `debug.flag` file exists there (and the log is under 1 MB).
+/// `debug.flag` file exists there.
 fn diag(msg: &str) {
     use std::io::Write;
     let Some(dir) = crate::dll_dir() else { return };
     if !dir.join("debug.flag").exists() {
         return;
     }
-    let log = dir.join("debug.log");
-    if std::fs::metadata(&log).is_ok_and(|m| m.len() > 1_000_000) {
-        return;
-    }
+    let log = crate::rotated_log(&dir);
     let Ok(mut f) = std::fs::OpenOptions::new()
         .create(true)
         .append(true)

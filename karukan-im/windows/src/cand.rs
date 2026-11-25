@@ -566,6 +566,27 @@ fn compute(
     (width, height)
 }
 
+/// Rows on a full candidate page (the engine pages by nine).
+const PAGE_ROWS: usize = 9;
+
+/// Where the window's top goes, and whether it sits above the text: below
+/// (`below` is just under the composition) unless a full page would run past
+/// the work area's bottom, then right above the composition (`top`).
+fn place_y(
+    top: i32,
+    below: i32,
+    height: i32,
+    page_height: i32,
+    work: (i32, i32),
+    gap: i32,
+) -> (i32, bool) {
+    if below + page_height > work.1 {
+        ((top - height - gap).max(work.0), true)
+    } else {
+        (below, false)
+    }
+}
+
 /// Show or update the window. `anchor` places it under (or, near the screen
 /// bottom, above) the composition; `None` keeps the current position.
 pub fn show(
@@ -607,7 +628,14 @@ pub fn show(
         let mut flipped = VIEW.with(|v| v.borrow().flipped);
         if let Some(a) = &anchor {
             flipped = false;
-            // keep it on screen: flip above the composition near the bottom
+            // keep it on screen: flip above the composition near the bottom.
+            // Decided for a full page, not for the rows shown now: with the
+            // window's own height a short list (an edit inside the
+            // composition) went below the text and a long one above, so the
+            // window jumped sides within one composition.
+            let row_h = VIEW.with(|v| v.borrow().row_h);
+            let shown_rows = items.len().min(PAGE_ROWS) as i32;
+            let page_height = height + (PAGE_ROWS as i32 - shown_rows) * row_h;
             let mon = MonitorFromPoint(
                 POINT {
                     x: a.x,
@@ -621,10 +649,14 @@ pub fn show(
             };
             if GetMonitorInfoW(mon, &mut mi).as_bool() {
                 let work = mi.rcWork;
-                if y + height > work.bottom {
-                    y = (a.top - height - px(2, scale)).max(work.top);
-                    flipped = true;
-                }
+                (y, flipped) = place_y(
+                    a.top,
+                    y,
+                    height,
+                    page_height,
+                    (work.top, work.bottom),
+                    px(2, scale),
+                );
                 if x + width > work.right {
                     x = (work.right - width).max(work.left);
                 }
@@ -653,14 +685,11 @@ fn place_log(anchor: &Option<Anchor>, x: i32, y: i32, w: i32, h: i32, dpi: u32) 
     if !dir.join("debug.flag").exists() {
         return;
     }
-    // a flag left on must not grow the log without bound
-    if std::fs::metadata(dir.join("debug.log")).is_ok_and(|m| m.len() > 1_000_000) {
-        return;
-    }
+    let log = crate::rotated_log(&dir);
     let Ok(mut f) = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
-        .open(dir.join("debug.log"))
+        .open(log)
     else {
         return;
     };
@@ -799,5 +828,22 @@ pub fn render_preview(
         let _ = DeleteDC(mem);
         ReleaseDC(None, hdc);
         (w, h, buf)
+    }
+}
+
+#[cfg(test)]
+mod placement_tests {
+    use super::place_y;
+
+    #[test]
+    fn a_short_list_goes_where_a_full_page_would() {
+        // text at 1340..1361 on a 1440-high work area; a full page is 340 high
+        let full = place_y(1340, 1363, 340, 340, (0, 1440), 2);
+        let short = place_y(1340, 1363, 68, 340, (0, 1440), 2);
+        assert!(full.1 && short.1, "{full:?} {short:?}");
+        // and stays attached right above the text
+        assert_eq!(short.0, 1340 - 68 - 2);
+        // with room below, both go below
+        assert_eq!(place_y(400, 423, 68, 340, (0, 1440), 2), (423, false));
     }
 }

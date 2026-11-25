@@ -172,3 +172,16 @@ pub fn __render_candidate_preview(
 ) -> (i32, i32, Vec<u8>) {
     cand::render_preview(items, cursor, page, total_pages, aux, typed, dark, scale)
 }
+
+/// `debug.log` in `dir`, moved aside to `debug.old.log` once it passes 1 MB:
+/// a flag left on must not grow the log without bound, and must not stop it
+/// either — a full log that no longer records anything (as happened) is no
+/// use when the next problem comes.
+#[cfg(windows)]
+pub(crate) fn rotated_log(dir: &std::path::Path) -> std::path::PathBuf {
+    let log = dir.join("debug.log");
+    if std::fs::metadata(&log).is_ok_and(|m| m.len() > 1_000_000) {
+        let _ = std::fs::rename(&log, dir.join("debug.old.log"));
+    }
+    log
+}
