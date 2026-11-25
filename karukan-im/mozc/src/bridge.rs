@@ -764,10 +764,8 @@ impl<B: Backend> Bridge<B> {
     /// composition does.
     fn on_follow_enter(&mut self, raw: &[u8], inp: &Input) -> Option<Vec<u8>> {
         let key = inp.key.as_ref()?;
-        let enter = matches!(
-            key.special,
-            Some(input::SK_ENTER | input::SK_VIRTUAL_ENTER)
-        ) && !key.shift()
+        let enter = matches!(key.special, Some(input::SK_ENTER | input::SK_VIRTUAL_ENTER))
+            && !key.shift()
             && !key.ctrl()
             && !key.alt()
             && !key.is_release();
