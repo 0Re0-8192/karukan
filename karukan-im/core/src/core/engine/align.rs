@@ -32,10 +32,18 @@ fn is_hiragana(c: char) -> bool {
     ('\u{3041}'..='\u{309f}').contains(&c)
 }
 
+/// Whether `c` can be part of a converted run: kanji, katakana (ー and 々
+/// included), letters and digits. Hiragana are the reading's own, and
+/// punctuation and spaces are typed as they are, so both end a run — the 、
+/// in 中国、韓国 keeps them two words.
+fn in_run(c: char) -> bool {
+    c.is_alphanumeric() && !is_hiragana(c)
+}
+
 /// Split `surface` (the conversion of `reading`) into segments, each a char
 /// standing for itself or a run of converted chars with the reading it
-/// spells. A hiragana char in the surface is never part of a converted run:
-/// it is the reading's own, and only those pin where a run ends. `None` when
+/// spells. A hiragana char or a mark in the surface is never part of a
+/// converted run: those are the reading's own, and they pin where a run ends. `None` when
 /// no such split exists (the model rewrote kana, or answered in another
 /// script altogether).
 pub(super) fn align(reading: &str, surface: &str) -> Option<Vec<Segment>> {
@@ -43,11 +51,11 @@ pub(super) fn align(reading: &str, surface: &str) -> Option<Vec<Segment>> {
     let s: Vec<char> = surface.chars().collect();
     let (n, m) = (r.len(), s.len());
     // the converted run starting at each surface position: up to the next
-    // hiragana char
+    // hiragana char or mark
     let run_end: Vec<usize> = (0..m)
         .map(|j| {
             let mut e = j;
-            while e < m && !is_hiragana(s[e]) {
+            while e < m && in_run(s[e]) {
                 e += 1;
             }
             e
@@ -157,6 +165,18 @@ mod tests {
         assert_eq!(
             show("とうきょうえきまで", "東京駅まで").as_deref(),
             Some("[東京駅=とうきょうえき]まで")
+        );
+    }
+
+    #[test]
+    fn marks_part_words_too() {
+        assert_eq!(
+            show("ちゅうごく、かんこくがある", "中国、韓国がある").as_deref(),
+            Some("[中国=ちゅうごく]、[韓国=かんこく]がある")
+        );
+        assert_eq!(
+            show("あめ。ゆき", "雨。雪").as_deref(),
+            Some("[雨=あめ]。[雪=ゆき]")
         );
     }
 
