@@ -348,7 +348,13 @@ impl LlamaCppModel {
             .unwrap_or_else(|e| e.into_inner())
     }
 
-    /// Build LlamaContextParams with configured n_threads
+    /// The threads a conversion starting now runs on: the configured count,
+    /// or one while the rest of the machine holds the cores (see `load`).
+    fn threads(&self) -> u32 {
+        super::load::threads_for(self.n_threads)
+    }
+
+    /// Build LlamaContextParams with the threads a conversion now gets
     fn context_params(&self) -> LlamaContextParams {
         self.context_params_with_n_ctx(self.n_ctx)
     }
@@ -362,16 +368,20 @@ impl LlamaCppModel {
             .map_err(inference_err)
     }
 
-    /// Build LlamaContextParams with configured n_threads and an explicit KV
-    /// cache size. Beam search needs more cells than a greedy run: every beam
-    /// keeps its own generated tokens alongside the shared prompt.
+    /// Build LlamaContextParams with the threads a conversion now gets and an
+    /// explicit KV cache size. Beam search needs more cells than a greedy run:
+    /// every beam keeps its own generated tokens alongside the shared prompt.
     fn context_params_with_n_ctx(&self, n_ctx: u32) -> LlamaContextParams {
+        Self::params_for(n_ctx, self.threads())
+    }
+
+    fn params_for(n_ctx: u32, n_threads: u32) -> LlamaContextParams {
         let params = LlamaContextParams::default()
             .with_n_ctx(Some(NonZeroU32::new(n_ctx).unwrap_or(NonZeroU32::MIN)));
-        if self.n_threads > 0 {
+        if n_threads > 0 {
             params
-                .with_n_threads(self.n_threads as i32)
-                .with_n_threads_batch(self.n_threads as i32)
+                .with_n_threads(n_threads as i32)
+                .with_n_threads_batch(n_threads as i32)
         } else {
             params
         }
@@ -469,15 +479,17 @@ impl LlamaCppModel {
 
         let mut guard = self.lock_greedy_session();
         // The session belongs to the model, not to this wrapper: one built
-        // for another wrapper's settings is rebuilt for these.
+        // for another wrapper's settings, or for another thread count than
+        // the machine now leaves room for, is rebuilt.
+        let n_threads = self.threads();
         if guard
             .as_ref()
-            .is_some_and(|s| (s.n_ctx, s.n_threads) != (self.n_ctx, self.n_threads))
+            .is_some_and(|s| (s.n_ctx, s.n_threads) != (self.n_ctx, n_threads))
         {
             *guard = None;
         }
         if guard.is_none() {
-            *guard = Some(self.new_greedy_session()?);
+            *guard = Some(self.new_greedy_session(n_threads)?);
         }
         let session = guard.as_mut().expect("session initialized above");
         let result = self.run_greedy(
@@ -499,9 +511,8 @@ impl LlamaCppModel {
     /// A fresh persistent context for the greedy path. Batches are sized to
     /// n_ctx: unlike the one-shot paths this allocation happens once, not
     /// per conversion, so there is nothing to win by shrinking it.
-    fn new_greedy_session(&self) -> Result<GreedySession> {
-        let params = self
-            .context_params()
+    fn new_greedy_session(&self, n_threads: u32) -> Result<GreedySession> {
+        let params = Self::params_for(self.n_ctx, n_threads)
             .with_n_batch(self.n_ctx)
             .with_n_ubatch(self.n_ctx);
         let ctx = self.new_context(params)?;
@@ -515,7 +526,7 @@ impl LlamaCppModel {
             prompt: Vec::new(),
             output: Vec::new(),
             n_ctx: self.n_ctx,
-            n_threads: self.n_threads,
+            n_threads,
             #[cfg(test)]
             decodes: 0,
         })

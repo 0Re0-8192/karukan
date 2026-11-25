@@ -205,7 +205,11 @@ fn server_exe(dir: &std::path::Path) -> PathBuf {
 }
 
 fn server_envs(dir: &std::path::Path) -> Vec<(String, String)> {
-    let mut envs: Vec<(String, String)> = Vec::new();
+    // OpenMP's threads sleep between conversions instead of spinning, which
+    // kept ~3 cores busy for as long as one typed (see the server's
+    // `keep_up_under_load`). Given here because the runtime reads it as it
+    // loads, before the server's own code runs.
+    let mut envs: Vec<(String, String)> = vec![("OMP_WAIT_POLICY".into(), "PASSIVE".into())];
     // Portable mode: keep every file next to the DLL.
     if dir.join("portable.flag").exists() {
         let p = |n: &str| dir.join(n).to_string_lossy().into_owned();

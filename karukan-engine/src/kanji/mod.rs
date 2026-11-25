@@ -4,6 +4,7 @@ mod backend;
 mod error;
 mod hf_download;
 mod llamacpp;
+mod load;
 
 pub use backend::{KanaKanjiConverter, ModelSource, build_jinen_prompt, clean_model_output};
 pub use error::KanjiError;

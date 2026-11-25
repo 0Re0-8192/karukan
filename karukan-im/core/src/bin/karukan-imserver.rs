@@ -37,24 +37,37 @@ fn prefetch_models() -> anyhow::Result<()> {
 }
 
 /// Keeps typing responsive while something else holds every core (a render,
-/// a game): the server converts a keystroke in a few tens of milliseconds and
-/// then sleeps, so running it above normal priority costs the other work
-/// almost nothing, while at normal priority a conversion's threads are
-/// preempted by the busy ones and each waits on the slowest of them. Measured
-/// with all 32 threads of a 16-core CPU spinning (`load_bench`): at normal,
-/// up to 55 keys in 136 over 100 ms and single keys stalled 0.4–2.9 s; above
-/// it, at most 3 over 100 ms and none past 160 ms. Also opts out of power throttling, which on CPUs with efficiency cores
-/// would put a windowless background process on them.
+/// a game), and keeps the server off the cores between keystrokes.
+///
+/// - High priority: at normal priority a conversion's threads are preempted
+///   by the busy ones and each waits on the slowest of them; above normal is
+///   not enough once the other work raises its own priority, as games do.
+///   Measured with all 32 threads of a 16-core CPU spinning (`load_bench`):
+///   single keys stalled 0.4–2.9 s at normal, and up to 3.4 s above normal
+///   against spinners at above normal; at high, none past 125 ms either way.
+/// - OpenMP's threads must sleep when idle: by default they spin between
+///   conversions, which while typing kept about 3 cores busy (50 s of CPU
+///   over 18 s of typing) — at high priority that would take them from the
+///   game. The text service starts the server with `OMP_WAIT_POLICY=PASSIVE`
+///   (the runtime reads it as it loads, so setting it here is too late).
+///   Asleep, a keystroke costs ~6 ms more unloaded (12 → 18 ms) and the CPU
+///   used is the conversions' own.
+/// - Opts out of power throttling, which on CPUs with efficiency cores would
+///   put a windowless background process on them.
+///
+/// Priority alone does not save a multi-threaded conversion on a machine
+/// with every core busy; the engine drops to one thread then
+/// (`karukan_engine`'s `kanji::load`).
 #[cfg(windows)]
 fn keep_up_under_load() {
     use windows::Win32::System::Threading::{
-        ABOVE_NORMAL_PRIORITY_CLASS, GetCurrentProcess, PROCESS_POWER_THROTTLING_CURRENT_VERSION,
+        GetCurrentProcess, HIGH_PRIORITY_CLASS, PROCESS_POWER_THROTTLING_CURRENT_VERSION,
         PROCESS_POWER_THROTTLING_EXECUTION_SPEED, PROCESS_POWER_THROTTLING_STATE,
         ProcessPowerThrottling, SetPriorityClass, SetProcessInformation,
     };
     unsafe {
         let me = GetCurrentProcess();
-        if let Err(e) = SetPriorityClass(me, ABOVE_NORMAL_PRIORITY_CLASS) {
+        if let Err(e) = SetPriorityClass(me, HIGH_PRIORITY_CLASS) {
             tracing::warn!("priority not raised: {e}");
         }
         let state = PROCESS_POWER_THROTTLING_STATE {
@@ -72,6 +85,9 @@ fn keep_up_under_load() {
 }
 
 fn main() {
+    #[cfg(windows)]
+    keep_up_under_load();
+
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -87,9 +103,6 @@ fn main() {
         }
         return;
     }
-
-    #[cfg(windows)]
-    keep_up_under_load();
 
     // Windows: `--pipe NAME [--idle-exit SECS]` serves every app over one named pipe
     #[cfg(windows)]
