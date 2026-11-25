@@ -25,8 +25,9 @@ use windows::Win32::UI::TextServices::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreateIconIndirect, CreatePopupMenu, DestroyMenu, GetSystemMetrics, HICON,
-    ICONINFO, MF_STRING, SM_CXSMICON, TPM_LEFTALIGN, TPM_LEFTBUTTON, TPM_NONOTIFY, TPM_RETURNCMD,
-    TPM_TOPALIGN, TrackPopupMenu,
+    ICONINFO, MF_STRING, SM_CXSMICON, TPM_BOTTOMALIGN, TPM_LEFTALIGN, TPM_LEFTBUTTON, TPM_NONOTIFY,
+    TPM_RETURNCMD, TPM_RIGHTALIGN, TPM_TOPALIGN, TPM_VERTICAL, TPMPARAMS, TRACK_POPUP_MENU_FLAGS,
+    TrackPopupMenuEx,
 };
 use windows::core::{BSTR, GUID, IUnknown, Interface, Ref, Result, implement, w};
 
@@ -185,6 +186,31 @@ fn draw_icon(label: &str) -> Result<HICON> {
     }
 }
 
+/// Where the menu goes: beside the button, on the side away from the
+/// taskbar's edge (right of a taskbar on the left, above one at the bottom),
+/// the button itself excluded. The click point alone does not say where the
+/// button is: on a vertical taskbar it came out well below it.
+fn menu_anchor(
+    area: Option<RECT>,
+    pt: POINT,
+    work: Option<RECT>,
+) -> (i32, i32, TRACK_POPUP_MENU_FLAGS) {
+    let Some(r) = area else {
+        let x = work.map_or(pt.x, |w| pt.x.clamp(w.left, w.right));
+        return (x, pt.y, TPM_LEFTALIGN | TPM_TOPALIGN);
+    };
+    match work {
+        Some(w) if r.right <= w.left => (r.right, r.top, TPM_LEFTALIGN | TPM_TOPALIGN),
+        Some(w) if r.left >= w.right => (r.left, r.top, TPM_RIGHTALIGN | TPM_TOPALIGN),
+        Some(w) if r.bottom <= w.top => (r.left, r.bottom, TPM_LEFTALIGN | TPM_TOPALIGN),
+        _ => (
+            r.left,
+            r.top,
+            TPM_LEFTALIGN | TPM_BOTTOMALIGN | TPM_VERTICAL,
+        ),
+    }
+}
+
 impl ITfLangBarItem_Impl for ModeButton_Impl {
     fn GetInfo(&self, pinfo: *mut TF_LANGBARITEMINFO) -> Result<()> {
         if pinfo.is_null() {
@@ -220,7 +246,7 @@ impl ITfLangBarItem_Impl for ModeButton_Impl {
 }
 
 impl ITfLangBarItemButton_Impl for ModeButton_Impl {
-    fn OnClick(&self, click: TfLBIClick, pt: &POINT, _prcarea: *const RECT) -> Result<()> {
+    fn OnClick(&self, click: TfLBIClick, pt: &POINT, prcarea: *const RECT) -> Result<()> {
         log(&format!(
             "OnClick {:?} at ({}, {}) open={}",
             click.0,
@@ -239,24 +265,30 @@ impl ITfLangBarItemButton_Impl for ModeButton_Impl {
                 let owner = Some(GetFocus())
                     .filter(|h| !h.is_invalid())
                     .or_else(|| (self.hooks.owner)());
-                let mut x = pt.x;
+                let area = prcarea.as_ref().copied().filter(|r| r.right > r.left);
                 let mon = MonitorFromPoint(*pt, MONITOR_DEFAULTTONEAREST);
                 let mut mi = MONITORINFO {
                     cbSize: std::mem::size_of::<MONITORINFO>() as u32,
                     ..Default::default()
                 };
-                if GetMonitorInfoW(mon, &mut mi).as_bool() {
-                    x = x.clamp(mi.rcWork.left, mi.rcWork.right);
-                }
-                let picked = TrackPopupMenu(
+                let work = GetMonitorInfoW(mon, &mut mi).as_bool().then_some(mi.rcWork);
+                let (x, y, align) = menu_anchor(area, *pt, work);
+                let params = TPMPARAMS {
+                    cbSize: std::mem::size_of::<TPMPARAMS>() as u32,
+                    rcExclude: area.unwrap_or_default(),
+                };
+                let picked = TrackPopupMenuEx(
                     menu,
-                    TPM_NONOTIFY | TPM_RETURNCMD | TPM_LEFTALIGN | TPM_TOPALIGN | TPM_LEFTBUTTON,
+                    (TPM_NONOTIFY | TPM_RETURNCMD | TPM_LEFTBUTTON | align).0,
                     x,
-                    pt.y,
-                    None,
+                    y,
                     owner.unwrap_or_default(),
-                    None,
+                    area.map(|_| &params as *const TPMPARAMS),
                 );
+                log(&format!(
+                    "menu area={area:?} work={work:?} at ({x}, {y}) align={:#x}",
+                    align.0
+                ));
                 let err = windows::Win32::Foundation::GetLastError();
                 log(&format!(
                     "menu owner={:?} picked={} err={err:?}",
@@ -363,6 +395,36 @@ mod tests {
             let _ = DeleteObject(HGDIOBJ(info.hbmMask.0));
             (n, buf)
         }
+    }
+
+    #[test]
+    fn the_menu_sits_beside_the_button_away_from_the_edge() {
+        let rect = |l, t, r, b| RECT {
+            left: l,
+            top: t,
+            right: r,
+            bottom: b,
+        };
+        let pt = POINT { x: 18, y: 1284 };
+        // taskbar on the left: right of the button, top-aligned with it
+        let (x, y, a) = menu_anchor(
+            Some(rect(0, 1230, 72, 1262)),
+            pt,
+            Some(rect(72, 0, 5120, 1440)),
+        );
+        assert_eq!((x, y, a), (72, 1230, TPM_LEFTALIGN | TPM_TOPALIGN));
+        // at the bottom: above the button
+        let (x, y, a) = menu_anchor(
+            Some(rect(4800, 1392, 4840, 1440)),
+            pt,
+            Some(rect(0, 0, 5120, 1392)),
+        );
+        assert_eq!(
+            (x, y, a),
+            (4800, 1392, TPM_LEFTALIGN | TPM_BOTTOMALIGN | TPM_VERTICAL)
+        );
+        // no rectangle: the click point, kept in the work area
+        assert_eq!(menu_anchor(None, pt, Some(rect(72, 0, 5120, 1440))).0, 72);
     }
 
     #[test]
