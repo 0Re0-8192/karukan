@@ -362,3 +362,41 @@ fn mozc_committing_ends_the_follow() {
             .any(|c| c == r#"set_reading {"text":""}"#)
     );
 }
+
+#[test]
+fn a_reply_to_a_test_key_or_a_request_does_not_end_it() {
+    let mut b = bridge();
+    flick(&mut b, "き", "き", &[]).unwrap();
+    // A test key: Mozc answers without the preedit.
+    let mut w = W::new();
+    w.message(1, |i| {
+        i.uint(1, 4);
+        i.uint(2, 5);
+        i.message(3, |k| k.string(5, "く"));
+    });
+    assert!(b.handle(&w.0).is_none());
+    assert!(b.observe(&w.0, &mozc_reply(&[], &[], false)).is_none());
+    assert!(
+        !b.backend()
+            .calls
+            .iter()
+            .any(|c| c == r#"set_reading {"text":""}"#)
+    );
+    // The next key is still the same composition: its context is not taken.
+    let r = flick(&mut b, "う", "きょう", &[]).unwrap();
+    assert_eq!(texts(&r), ["今日", "京"]);
+    let ctx = b
+        .backend()
+        .calls
+        .iter()
+        .filter(|c| c.starts_with("set_surrounding_text"))
+        .count();
+    assert_eq!(ctx, 1);
+}
+
+#[test]
+fn pending_romaji_is_not_a_reading() {
+    let mut b = bridge();
+    assert!(flick(&mut b, "k", "k", &[]).is_none());
+    assert!(flick(&mut b, "き", "きk", &[]).is_none());
+}

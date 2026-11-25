@@ -565,8 +565,15 @@ impl<B: Backend> Bridge<B> {
             .and_then(|t| proto::get(t, 2))
             .and_then(|v| v.as_bytes())
             .and_then(proto::parse);
+        // Only a key or a command answers with the composition as it stands; the reply to anything
+        // else (a test key, a request) can lack a preedit while Mozc is still composing.
+        let composition_reply = inp
+            .as_ref()
+            .is_some_and(|i| i.ty == input::SEND_KEY || i.ty == input::SEND_COMMAND);
         if let Some(o) = &out {
-            self.mozc_active = proto::get(o, 5).is_some();
+            if composition_reply {
+                self.mozc_active = proto::get(o, 5).is_some();
+            }
             if let Some(st) = proto::get(o, 13)
                 .and_then(|v| v.as_bytes())
                 .and_then(proto::parse)
@@ -598,7 +605,11 @@ impl<B: Backend> Bridge<B> {
                 _ => {}
             }
         }
-        let amended = self.follow_reply(mozc_reply);
+        let amended = if composition_reply {
+            self.follow_reply(mozc_reply)
+        } else {
+            None
+        };
         match self.pending.take() {
             Some(text) => output::inject_result(amended.as_deref().unwrap_or(mozc_reply), &text),
             None => amended,
@@ -618,6 +629,11 @@ impl<B: Backend> Bridge<B> {
             self.end_follow();
             return None;
         };
+        if view.reading.chars().any(|c| c.is_ascii_alphabetic()) {
+            // Romaji still pending (a Godan keyboard): not a reading yet.
+            self.end_follow();
+            return None;
+        }
         if view.converting {
             // Mozc's candidates are for one of its segments now: leave them to it.
             return None;
