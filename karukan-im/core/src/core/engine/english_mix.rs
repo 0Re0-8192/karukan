@@ -123,14 +123,16 @@ pub(super) fn split(
     let n = raw.len();
     let words = words();
 
-    // Score, compared in order: fewest letters taken out of the kana for a
-    // common word, then the English gain, then the fewest pieces. A common
-    // word is only there because the keys around it cannot be kana, so the
-    // split that leaves the most to the kana wins; without that a word would
-    // grab letters of the syllables beside it (`ko|no` read as `k|ok|`,
-    // `a|ri|ma|su` as `a|rim|ass|u`), since each such fragment is a word that
-    // is not kana on its own. Product names and learned words cost nothing:
-    // they are meant to win where the keys also read as kana.
+    // Score, compared in order: fewest common words, then the English gain,
+    // then the fewest pieces. A common word is only there because the keys
+    // around it cannot be kana, so the split needing the fewest of them wins;
+    // without that a word would grab letters of the syllables beside it
+    // (`ko|no` read as `k|ok|`, `a|ri|ma|su` as `a|rim|ass|u`), each such
+    // fragment being a word that is not kana on its own — and always one word
+    // more. Counting words, not letters, keeps a whole word whole where its
+    // start also reads as kana (`return`, not `re|turn`). Product names and
+    // learned words are free: they are meant to win where the keys also read
+    // as kana.
     #[derive(Clone)]
     struct Step {
         score: (i64, usize, i64),
@@ -145,16 +147,12 @@ pub(super) fn split(
     });
     for i in (0..n).rev() {
         let mut here: Option<Step> = None;
-        let consider = |end: usize, english: bool, cost: usize, here: &mut Option<Step>| {
+        let consider = |end: usize, english: bool, cost: i64, here: &mut Option<Step>| {
             let Some(next) = &best[end] else { return };
             // cubed, so one long word beats several short ones that merely
             // fit (windows, not now+in+dow+sd)
             let gain = if english { (end - i).pow(3) } else { 0 };
-            let score = (
-                next.score.0 - cost as i64,
-                next.score.1 + gain,
-                next.score.2 - 1,
-            );
+            let score = (next.score.0 - cost, next.score.1 + gain, next.score.2 - 1);
             if here.as_ref().is_none_or(|h| score > h.score) {
                 *here = Some(Step {
                     score,
@@ -168,7 +166,7 @@ pub(super) fn split(
             let learned = learned(run);
             let named = names().contains(run);
             if (words.contains(run) || learned) && (!kana(run) || named || learned) {
-                let cost = if named || learned { 0 } else { end - i };
+                let cost = if named || learned { 0 } else { 1 };
                 consider(end, true, cost, &mut here);
             }
         }
@@ -551,6 +549,38 @@ mod tests {
             Some("<kono>[null]<woarimasu>")
         );
         assert_eq!(show("konokanhanull").as_deref(), Some("<konokanha>[null]"));
+    }
+
+    #[test]
+    fn a_whole_word_stays_whole_where_its_start_reads_as_kana() {
+        // `re`/`to`/`u` are kana, `turn`/`day`/`pdate` are not: still one word
+        let is_kana = |run: &str| {
+            let table = ["re", "to", "u", "su", "ru", "ha", "wo"];
+            let mut rest = run;
+            'outer: while !rest.is_empty() {
+                for r in table {
+                    if let Some(t) = rest.strip_prefix(r) {
+                        rest = t;
+                        continue 'outer;
+                    }
+                }
+                return false;
+            }
+            !run.is_empty()
+        };
+        let show = |raw: &str| {
+            split(raw, is_kana, |_| false).map(|ps| {
+                ps.iter()
+                    .map(|p| match p {
+                        Piece::English(w) => format!("[{w}]"),
+                        Piece::Kana(k) => format!("<{k}>"),
+                    })
+                    .collect::<String>()
+            })
+        };
+        assert_eq!(show("returnha").as_deref(), Some("[return]<ha>"));
+        assert_eq!(show("todayha").as_deref(), Some("[today]<ha>"));
+        assert_eq!(show("updatewo").as_deref(), Some("[update]<wo>"));
     }
 
     #[test]
