@@ -11,6 +11,7 @@ use flate2::write::DeflateEncoder;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+mod msime;
 mod sys;
 mod word;
 
@@ -34,6 +35,8 @@ struct Opts {
     pack: Option<(PathBuf, PathBuf)>,
     /// `--word`: the word registration window, prefilled
     word: Option<(String, String)>,
+    /// `--import FILE` / `--import-msime` (`None` inside): words into it, no window
+    import: Option<Option<PathBuf>>,
 }
 
 fn parse_args() -> Result<Opts> {
@@ -55,6 +58,12 @@ fn parse_args() -> Result<Opts> {
             "--surface" => {
                 o.word.get_or_insert_default().1 = it.next().unwrap_or_default();
             }
+            "--import" => {
+                o.import = Some(Some(PathBuf::from(
+                    it.next().context("--import needs a file")?,
+                )))
+            }
+            "--import-msime" => o.import = Some(None),
             "pack" => {
                 let stage = PathBuf::from(it.next().context("pack STAGE_DIR -o OUT.exe")?);
                 if it.next().as_deref() != Some("-o") {
@@ -79,7 +88,7 @@ pub fn main() -> i32 {
             return 2;
         }
     };
-    if let Some((reading, surface)) = &o.word {
+    if o.word.is_some() || o.import.is_some() {
         // registered beside this exe: the install folder
         let Some(install) = std::env::current_exe()
             .ok()
@@ -87,7 +96,11 @@ pub fn main() -> i32 {
         else {
             return 2;
         };
-        return word::run(&install, reading, surface);
+        if let Some(source) = &o.import {
+            return word::run_import(&install, source.as_deref());
+        }
+        let (reading, surface) = o.word.unwrap_or_default();
+        return word::run(&install, &reading, &surface);
     }
     let quiet = o.quiet || o.pack.is_some();
     let r = if let Some((stage, out)) = &o.pack {
