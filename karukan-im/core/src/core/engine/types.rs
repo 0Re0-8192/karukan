@@ -308,8 +308,10 @@ pub(in crate::core) struct LiveConversion {
     /// Whether live conversion is enabled (toggled via Ctrl+Shift+L)
     pub enabled: bool,
     /// Whether the live suggestion is currently shown in the preedit.
-    /// Cleared by gestures that fall back to the kana display (cursor moves,
-    /// first Escape, mode switches) without discarding the chunks.
+    /// Cleared by gestures that fall back to the kana display (first Escape,
+    /// mode switches) without discarding the chunks. A cursor move keeps it:
+    /// the display is kana while the caret is inside anyway, and the
+    /// conversion shows again when the caret is back at the end.
     pub shown: bool,
 }
 

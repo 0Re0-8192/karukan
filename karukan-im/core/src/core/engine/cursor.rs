@@ -3,16 +3,18 @@
 use super::*;
 
 impl InputMethodEngine {
-    /// Common helper for cursor movement: clear live conversion and set the
-    /// new display position. Nothing settles — unevaluated romaji stays
-    /// live, so typing after a move can still combine with it. Moving does
-    /// end a temporary alphabet word (the user left the word they were
-    /// typing), so the next key is evaluated as romaji again.
+    /// Common helper for cursor movement: set the new display position.
+    /// Nothing settles — unevaluated romaji stays live, so typing after a
+    /// move can still combine with it. Moving does end a temporary alphabet
+    /// word (the user left the word they were typing), so the next key is
+    /// evaluated as romaji again. The live conversion is kept, not dropped:
+    /// away from the end the display falls back to kana for editing on its
+    /// own (`build_composing_preedit`), and back at the end the conversion
+    /// shows again; only Esc turns it off.
     fn move_caret(&mut self, new_pos: impl FnOnce(&InputBuffer) -> usize) -> EngineResult {
         if self.mode.current() == InputMode::Alphabet {
             self.mode.exit_temporary();
         }
-        self.live.shown = false;
         self.input_buf.set_cursor(new_pos(&self.input_buf));
         self.log_chunk_state("cursor");
         let preedit = self.set_composing_state();

@@ -244,17 +244,19 @@ fn test_commit_mid_buffer_ignores_live_text() {
 }
 
 #[test]
-fn test_live_conversion_cursor_move_clears() {
-    // Moving cursor should clear live conversion text
+fn test_live_conversion_cursor_move_shows_kana() {
+    // With the caret inside, the composition is shown as kana for editing;
+    // the conversion itself is kept for when the caret is back at the end
     let mut engine = make_live_conversion_engine();
 
     engine.process_key(&press('a'));
     engine.process_key(&press('i'));
     set_live_text(&mut engine, "愛");
 
-    // Left arrow clears live conversion
     engine.process_key(&press_key(Keysym::LEFT));
-    assert!(engine.live_text().is_empty());
+    assert_eq!(engine.preedit().unwrap().text(), "あい");
+    assert!(engine.live_text_with_pending().is_empty());
+    assert_eq!(engine.live_text(), "愛");
 }
 
 #[test]

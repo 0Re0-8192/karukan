@@ -452,9 +452,15 @@ impl InputMethodEngine {
         // Resolve the live text before settling: it needs the pending run.
         // A last lone `n` settles into ん, so what live conversion showed
         // (`佐藤さn`) is converted again from the settled reading (さとうさん).
-        let reconvert = self.pending_settles_differently()
-            && !matches!(self.mode.current(), InputMode::Katakana | InputMode::Emoji)
-            && !self.live_text_with_pending().is_empty();
+        // So is a composition edited away from its end: the kana shown there
+        // is the editing view, and Enter commits the conversion of the whole,
+        // what the caret back at the end would show — unless Escape turned
+        // the conversion off.
+        let caret_inside = self.input_buf.cursor() != self.input_buf.char_count();
+        let reconvert = !matches!(self.mode.current(), InputMode::Katakana | InputMode::Emoji)
+            && ((caret_inside && self.live.enabled && self.live.shown)
+                || (self.pending_settles_differently()
+                    && !self.live_text_with_pending().is_empty()));
         let live_text = if reconvert {
             String::new()
         } else {
@@ -513,8 +519,10 @@ impl InputMethodEngine {
     /// In live conversion mode: first Escape clears live conversion and shows hiragana,
     /// second Escape cancels input entirely.
     pub(super) fn cancel_composing(&mut self) -> EngineResult {
-        // If live conversion is active, first Escape returns to hiragana display
-        if !self.live_text().is_empty() {
+        // If live conversion is on screen, first Escape returns to hiragana
+        // display (with the caret inside, the display is already kana: Escape
+        // cancels)
+        if !self.live_text_with_pending().is_empty() {
             self.live.shown = false;
             let preedit = self.set_composing_state();
             return EngineResult::consumed()

@@ -391,3 +391,53 @@ fn unbound_keys_do_not_leak_while_composing() {
     };
     assert!(!engine.process_key(&alt).consumed);
 }
+
+fn commit_of(result: &EngineResult) -> Option<String> {
+    result.actions.iter().find_map(|a| match a {
+        EngineAction::Commit(t) => Some(t.clone()),
+        _ => None,
+    })
+}
+
+fn live_engine() -> InputMethodEngine {
+    let mut engine = InputMethodEngine::new();
+    engine.converters.kanji = None;
+    engine.live.enabled = true;
+    seed_model_cache(&mut engine, "キョウハアメ", "", &["今日は雨"]);
+    seed_model_cache(&mut engine, "キョウアメ", "", &["今日雨"]);
+    for c in "kyouhaame".chars() {
+        engine.process_key(&press(c));
+    }
+    engine
+}
+
+#[test]
+fn the_conversion_shows_again_when_the_caret_is_back_at_the_end() {
+    let mut engine = live_engine();
+    assert_eq!(engine.preedit().unwrap().text(), "今日は雨");
+    engine.process_key(&press_key(Keysym::LEFT));
+    assert_eq!(engine.preedit().unwrap().text(), "きょうはあめ");
+    engine.process_key(&press_key(Keysym::END));
+    assert_eq!(engine.preedit().unwrap().text(), "今日は雨");
+}
+
+#[test]
+fn enter_after_an_edit_inside_commits_the_conversion() {
+    // the kana shown with the caret inside is the editing view
+    let mut engine = live_engine();
+    engine.process_key(&press_key(Keysym::LEFT));
+    engine.process_key(&press_key(Keysym::LEFT));
+    engine.process_key(&press_key(Keysym::BACKSPACE));
+    assert_eq!(engine.preedit().unwrap().text(), "きょうあめ");
+    let r = engine.process_key(&press_key(Keysym::RETURN));
+    assert_eq!(commit_of(&r).as_deref(), Some("今日雨"));
+}
+
+#[test]
+fn enter_after_escape_still_commits_kana() {
+    let mut engine = live_engine();
+    engine.process_key(&press_key(Keysym::ESCAPE));
+    engine.process_key(&press_key(Keysym::LEFT));
+    let r = engine.process_key(&press_key(Keysym::RETURN));
+    assert_eq!(commit_of(&r).as_deref(), Some("きょうはあめ"));
+}

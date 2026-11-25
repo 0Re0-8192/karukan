@@ -132,7 +132,11 @@ pub(super) fn split(
     // more. Counting words, not letters, keeps a whole word whole where its
     // start also reads as kana (`return`, not `re|turn`). Product names and
     // learned words are free: they are meant to win where the keys also read
-    // as kana.
+    // as kana. What follows a word in Japanese is a particle or する — が, を,
+    // に, で, する — not a bare vowel, so a word leaving the kana a vowel start
+    // gains less: 3·len² less, which is about what one more letter is worth
+    // (len³ − (len−1)³), so `return|suru` beats `returns|uru` while
+    // `international|ization` still beats `inter|nationalization`.
     #[derive(Clone)]
     struct Step {
         score: (i64, usize, i64),
@@ -151,7 +155,16 @@ pub(super) fn split(
             let Some(next) = &best[end] else { return };
             // cubed, so one long word beats several short ones that merely
             // fit (windows, not now+in+dow+sd)
-            let gain = if english { (end - i).pow(3) } else { 0 };
+            let len = end - i;
+            let vowel_after = english
+                && end < n
+                && !next.english
+                && matches!(lower.as_bytes()[end], b'a' | b'i' | b'u' | b'e' | b'o');
+            let gain = match (english, vowel_after) {
+                (false, _) => 0,
+                (true, false) => len.pow(3),
+                (true, true) => len.pow(3).saturating_sub(3 * len.pow(2)).max(1),
+            };
             let score = (next.score.0 - cost, next.score.1 + gain, next.score.2 - 1);
             if here.as_ref().is_none_or(|h| score > h.score) {
                 *here = Some(Step {
@@ -280,7 +293,12 @@ impl InputMethodEngine {
                         .unwrap_or_else(|| self.converters.romaji.convert_flush(run));
                     let lctx = self.lctx_for(&base, &out);
                     let converted = self.convert_chunk(&reading, &lctx);
-                    out.push_str(&converted);
+                    let after_word = out.ends_with(|c: char| c.is_ascii_alphabetic());
+                    if after_word {
+                        out.push_str(&keep_typed_spelling(run, &converted));
+                    } else {
+                        out.push_str(&converted);
+                    }
                 }
             }
         }
@@ -452,6 +470,32 @@ impl InputMethodEngine {
     }
 }
 
+/// A word the list lacks (`internationalization`) splits into a word it has
+/// and a kana run (`international` + いざちおん), which the model, reading the
+/// word as context, may answer in English — spelled its own way
+/// (`isation`). Where the answer opens with letters that are the typed ones
+/// give or take two, the typed spelling is kept; the rest of the answer
+/// (`は難しい`) stays the model's.
+fn keep_typed_spelling(run: &str, converted: &str) -> String {
+    let letters = converted
+        .bytes()
+        .take_while(|b| b.is_ascii_alphabetic())
+        .count();
+    if letters < 3 || run.len() < letters || !run.is_char_boundary(letters) {
+        return converted.to_string();
+    }
+    let typed = &run[..letters];
+    let differ = typed
+        .bytes()
+        .zip(converted.bytes())
+        .filter(|(a, b)| !a.eq_ignore_ascii_case(b))
+        .count();
+    if differ > 2 {
+        return converted.to_string();
+    }
+    format!("{typed}{}", &converted[letters..])
+}
+
 /// What the keys read as, with a `.` between digits left a point (`1.5`) —
 /// the romaji rules alone read it as `。`, which the composition no longer
 /// holds once the digit after it has been typed.
@@ -585,6 +629,42 @@ mod tests {
         assert_eq!(show("returnha").as_deref(), Some("[return]<ha>"));
         assert_eq!(show("todayha").as_deref(), Some("[today]<ha>"));
         assert_eq!(show("updatewo").as_deref(), Some("[update]<wo>"));
+    }
+
+    #[test]
+    fn a_word_leaves_the_kana_a_consonant_start() {
+        // returns|uru and return|suru both fit; Japanese goes on with する
+        let is_kana = |run: &str| {
+            let table = ["su", "ru", "u", "ha", "wo"];
+            let mut rest = run;
+            'outer: while !rest.is_empty() {
+                for r in table {
+                    if let Some(t) = rest.strip_prefix(r) {
+                        rest = t;
+                        continue 'outer;
+                    }
+                }
+                return false;
+            }
+            !run.is_empty()
+        };
+        let pieces = split("returnsuru", is_kana, |_| false).unwrap();
+        assert_eq!(
+            pieces,
+            vec![Piece::English("return".into()), Piece::Kana("suru".into())]
+        );
+    }
+
+    #[test]
+    fn the_typed_spelling_survives_the_model() {
+        assert_eq!(
+            keep_typed_spelling("izationhamuzukashii", "isationは難しい"),
+            "izationは難しい"
+        );
+        // a real conversion is left alone
+        assert_eq!(keep_typed_spelling("dehenkan", "で変換"), "で変換");
+        // letters that are not the typed ones are not a respelling
+        assert_eq!(keep_typed_spelling("wosuru", "update"), "update");
     }
 
     #[test]
