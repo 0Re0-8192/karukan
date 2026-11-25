@@ -27,7 +27,7 @@ use windows::Win32::Globalization::{LCMAP_FULLWIDTH, LCMAP_HIRAGANA, LCMapString
 use windows::Win32::Graphics::Gdi::{
     CLEARTYPE_QUALITY, CLIP_DEFAULT_PRECIS, COLOR_GRAYTEXT, COLOR_WINDOW, COLOR_WINDOWTEXT,
     CreateFontW, DEFAULT_CHARSET, FF_DONTCARE, FW_NORMAL, GetSysColor, GetSysColorBrush, HBRUSH,
-    HDC, HFONT, OUT_DEFAULT_PRECIS, SetBkMode, SetTextColor, TRANSPARENT,
+    HDC, HFONT, InvalidateRect, OUT_DEFAULT_PRECIS, SetBkMode, SetTextColor, TRANSPARENT,
 };
 use windows::Win32::System::Com::{
     CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx, CoTaskMemFree,
@@ -85,51 +85,133 @@ pub fn registered_file(install: &Path) -> PathBuf {
         .join("registered.txt")
 }
 
-/// The reading as the dictionary keys it: hiragana (katakana, half-width
-/// too, folded), letters, digits and marks half-width (MS-IME keeps ｎｉｃｅ
-/// so), trimmed.
-pub fn normalize_reading(reading: &str) -> String {
-    let src: Vec<u16> = reading.trim().encode_utf16().collect();
-    if src.is_empty() {
-        return String::new();
-    }
-    let flags = LCMAP_HIRAGANA | LCMAP_FULLWIDTH;
-    let mapped = unsafe {
-        let n = LCMapStringEx(w!("ja-JP"), flags, &src, None, None, None, LPARAM(0));
-        let mut out = vec![0u16; n.max(0) as usize];
-        let got = LCMapStringEx(
-            w!("ja-JP"),
-            flags,
-            &src,
-            Some(&mut out),
-            None,
-            None,
-            LPARAM(0),
-        );
-        if got <= 0 {
-            reading.trim().to_string()
-        } else {
-            String::from_utf16_lossy(&out[..got as usize])
-        }
-    };
-    // full width was the way to join ﾃﾞ into デ; ASCII goes back
-    mapped
-        .chars()
-        .map(|c| match c {
-            '\u{ff01}'..='\u{ff5e}' => char::from_u32(c as u32 - 0xfee0).unwrap_or(c),
-            '\u{3000}' => ' ',
-            c => c,
-        })
-        .collect::<String>()
-        .trim()
-        .to_string()
+/// The widths kana input types digits and ASCII marks in (`[width]` of
+/// config.toml): a reading must be keyed the way it will be typed, or the
+/// word never comes up. Letters are always half-width there.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Widths {
+    pub half_digits: bool,
+    pub half_marks: bool,
 }
 
-/// The words of `file`, in file order (oldest first).
-pub fn load(file: &Path) -> Vec<Entry> {
-    std::fs::read(file)
-        .map(|b| msime::parse(&msime::decode(&b)))
-        .unwrap_or_default()
+/// What karukan ships: digits half-width, marks full-width.
+pub const SHIPPED: Widths = Widths {
+    half_digits: true,
+    half_marks: false,
+};
+
+static WIDTHS: std::sync::OnceLock<Widths> = std::sync::OnceLock::new();
+
+/// The widths `config\config.toml` beside the exe sets, the shipped ones
+/// for what it leaves out.
+pub fn read_widths(install: &Path) -> Widths {
+    let text =
+        std::fs::read_to_string(install.join("config").join("config.toml")).unwrap_or_default();
+    let mut w = SHIPPED;
+    let mut in_width = false;
+    for line in text.lines() {
+        let line = line.split('#').next().unwrap_or("").trim();
+        if line.starts_with('[') {
+            in_width = line == "[width]";
+            continue;
+        }
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        if !in_width {
+            continue;
+        }
+        let half = value.trim().trim_matches('"') == "half";
+        match key.trim() {
+            "digit" => w.half_digits = half,
+            "ascii_symbol" => w.half_marks = half,
+            _ => {}
+        }
+    }
+    w
+}
+
+/// The reading as the dictionary keys it, with this install's widths.
+pub fn normalize_reading(reading: &str) -> String {
+    normalize_reading_with(reading, *WIDTHS.get().unwrap_or(&SHIPPED))
+}
+
+/// The reading as kana input would have typed it: hiragana (katakana folded,
+/// the half-width kind joined with its marks: ﾃﾞｰﾀ → でーた), letters
+/// half-width (MS-IME keeps ｎｉｃｅ so), digits and ASCII marks in the
+/// widths `w` says, trimmed.
+pub fn normalize_reading_with(reading: &str, w: Widths) -> String {
+    let mut out = String::new();
+    let mut half_kana: Vec<u16> = Vec::new();
+    let flush = |half_kana: &mut Vec<u16>, out: &mut String| {
+        if half_kana.is_empty() {
+            return;
+        }
+        let mut buf = vec![0u16; half_kana.len() * 2 + 8];
+        let got = unsafe {
+            LCMapStringEx(
+                w!("ja-JP"),
+                LCMAP_HIRAGANA | LCMAP_FULLWIDTH,
+                half_kana,
+                Some(&mut buf),
+                None,
+                None,
+                LPARAM(0),
+            )
+        };
+        if got > 0 {
+            out.push_str(&String::from_utf16_lossy(&buf[..got as usize]));
+        } else {
+            out.push_str(&String::from_utf16_lossy(half_kana));
+        }
+        half_kana.clear();
+    };
+    for c in reading.trim().chars() {
+        if ('\u{ff61}'..='\u{ff9f}').contains(&c) {
+            half_kana.push(c as u16);
+            continue;
+        }
+        flush(&mut half_kana, &mut out);
+        let half = |c: char| char::from_u32(c as u32 - 0xfee0).unwrap_or(c);
+        let full = |c: char| char::from_u32(c as u32 + 0xfee0).unwrap_or(c);
+        out.push(match c {
+            '\u{30a1}'..='\u{30f6}' => char::from_u32(c as u32 - 0x60).unwrap_or(c),
+            'Ａ'..='Ｚ' | 'ａ'..='ｚ' => half(c),
+            '０'..='９' if w.half_digits => half(c),
+            '0'..='9' if !w.half_digits => full(c),
+            '\u{ff01}'..='\u{ff5e}' if w.half_marks => half(c),
+            '!'..='~' if !w.half_marks && !c.is_ascii_alphanumeric() => full(c),
+            c => c,
+        });
+    }
+    flush(&mut half_kana, &mut out);
+    out
+}
+
+/// The words of `file`, in file order (oldest first); none when there is no
+/// file yet. Any other failure is an error, never an empty list: a list
+/// read as empty would be saved over the words.
+pub fn load(file: &Path) -> std::io::Result<Vec<Entry>> {
+    match std::fs::read(file) {
+        Ok(b) => Ok(msime::parse(&msime::decode(&b))),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(e) => Err(e),
+    }
+}
+
+/// Change the words of `file`: read them afresh (another window may have
+/// changed them), let `f` edit them, and write them back if it says so.
+/// Returns the words as they are now, with what `f` returned.
+pub fn update<R>(
+    file: &Path,
+    f: impl FnOnce(&mut Vec<Entry>) -> (bool, R),
+) -> std::io::Result<(Vec<Entry>, R)> {
+    let mut entries = load(file)?;
+    let (changed, r) = f(&mut entries);
+    if changed {
+        save(file, &entries)?;
+    }
+    Ok((entries, r))
 }
 
 /// Write `entries` as the whole of `file`. Written beside the `user_dicts`
@@ -187,17 +269,17 @@ pub fn register(file: &Path, reading: &str, surface: &str) -> Result<bool, &'sta
     if !msime::usable(&reading, surface) {
         return Err("tab or line break");
     }
-    let mut entries = load(file);
     let new = Entry {
         reading,
         surface: surface.to_string(),
         rest: NOUN.into(),
     };
-    if merge(&mut entries, vec![new]) == 0 {
-        return Ok(false);
-    }
-    save(file, &entries).map_err(|_| "cannot write")?;
-    Ok(true)
+    let (_, added) = update(file, |e| {
+        let n = merge(e, vec![new]);
+        (n > 0, n)
+    })
+    .map_err(|_| "cannot write")?;
+    Ok(added > 0)
 }
 
 /// The words of `source`: an exported file, or `None` for Microsoft IME.
@@ -214,16 +296,17 @@ fn read_source(source: Option<&Path>) -> Result<Vec<Entry>, String> {
 /// Returns how many words were added.
 pub fn import(file: &Path, source: Option<&Path>) -> Result<usize, String> {
     let new = read_source(source)?;
-    let mut entries = load(file);
-    let added = merge(&mut entries, new);
-    if added > 0 {
-        save(file, &entries).map_err(|e| e.to_string())?;
-    }
+    let (_, added) = update(file, |e| {
+        let n = merge(e, new);
+        (n > 0, n)
+    })
+    .map_err(|e| e.to_string())?;
     Ok(added)
 }
 
 /// `--import FILE` / `--import-msime`, no window: the exit code is the count.
 pub fn run_import(install: &Path, source: Option<&Path>) -> i32 {
+    let _ = WIDTHS.set(read_widths(install));
     unsafe {
         let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
     }
@@ -298,6 +381,9 @@ impl Ui {
         };
         unsafe {
             let _ = SetWindowTextW(self.status, &HSTRING::from(text));
+            // painted from the message loop: a paint made while this borrow
+            // is held finds no rows to draw
+            let _ = InvalidateRect(Some(self.list), None, true);
         }
     }
 
@@ -361,30 +447,48 @@ impl Ui {
                 );
             }
         }
+        unsafe {
+            let _ = InvalidateRect(Some(self.list), None, true);
+        }
     }
 
-    fn write(&mut self) -> bool {
-        if save(&self.file, &self.all).is_err() {
-            unsafe {
-                let _ = MessageBeep(MB_ICONWARNING);
+    /// Apply `f` to the file's words (read afresh) and show the result; a
+    /// failure beeps and changes nothing.
+    fn change<R>(&mut self, f: impl FnOnce(&mut Vec<Entry>) -> (bool, R)) -> Option<R> {
+        match update(&self.file, f) {
+            Ok((all, r)) => {
+                self.all = all;
+                Some(r)
             }
-            self.all = load(&self.file);
-            self.refresh();
-            return false;
+            Err(_) => {
+                unsafe {
+                    let _ = MessageBeep(MB_ICONWARNING);
+                }
+                None
+            }
         }
-        true
     }
 
     fn delete_selected(&mut self) {
-        let mut gone = self.selected();
-        if gone.is_empty() {
+        let keys: HashSet<(String, String)> = self
+            .selected()
+            .into_iter()
+            .map(|i| (self.all[i].reading.clone(), self.all[i].surface.clone()))
+            .collect();
+        if keys.is_empty() {
             return;
         }
-        gone.sort_unstable();
-        self.removed = gone.iter().rev().map(|&i| self.all.remove(i)).collect();
-        self.removed.reverse();
+        let gone = self.change(|all| {
+            let (gone, kept): (Vec<Entry>, Vec<Entry>) = std::mem::take(all)
+                .into_iter()
+                .partition(|e| keys.contains(&(e.reading.clone(), e.surface.clone())));
+            *all = kept;
+            (!gone.is_empty(), gone)
+        });
+        if let Some(gone) = gone {
+            self.removed = gone;
+        }
         self.note = None;
-        self.write();
         self.refresh();
         self.select_rows(std::iter::empty());
     }
@@ -399,8 +503,10 @@ impl Ui {
             .iter()
             .map(|e| (e.reading.clone(), e.surface.clone()))
             .collect();
-        merge(&mut self.all, back);
-        self.write();
+        self.change(|all| {
+            let n = merge(all, back);
+            (n > 0, ())
+        });
         self.refresh();
         let rows: Vec<usize> = (0..self.shown.len())
             .filter(|&r| {
@@ -420,10 +526,12 @@ impl Ui {
             }
             return;
         };
-        let added = merge(&mut self.all, new);
-        if added > 0 && !self.write() {
+        let Some(added) = self.change(|all| {
+            let n = merge(all, new);
+            (n > 0, n)
+        }) else {
             return;
-        }
+        };
         unsafe {
             let _ = SetWindowTextW(self.surface, w!(""));
             let _ = SetWindowTextW(self.reading, w!(""));
@@ -686,6 +794,7 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
 /// Show the window; returns when it is closed. `reading`/`surface` prefill
 /// the fields (the composition Ctrl+F7 was pressed in).
 pub fn run(install: &Path, reading: &str, surface: &str) -> i32 {
+    let _ = WIDTHS.set(read_widths(install));
     let file = registered_file(install);
     unsafe {
         let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
@@ -890,7 +999,8 @@ pub fn run(install: &Path, reading: &str, surface: &str) -> i32 {
 
         UI.with(|u| {
             *u.borrow_mut() = Some(Ui {
-                all: load(&file),
+                // unreadable: shown empty, and every change refuses (it reads again)
+                all: load(&file).unwrap_or_default(),
                 file,
                 shown: Vec::new(),
                 surface: s,
@@ -955,6 +1065,31 @@ mod tests {
         assert_eq!(register(&file, "かるかん", "karukan"), Ok(false));
         assert_eq!(normalize_reading("ｎｉｃｅ２"), "nice2");
         assert_eq!(normalize_reading(" ﾃﾞｰﾀ ヴぁ "), "でーた ゔぁ");
+        assert_eq!(normalize_reading("ﾊﾟｿｺﾝ!？"), "ぱそこん！？");
+        let typed_half = Widths {
+            half_digits: false,
+            half_marks: true,
+        };
+        assert_eq!(
+            normalize_reading_with("ﾊﾟｿｺﾝ!？1", typed_half),
+            "ぱそこん!?１"
+        );
+        let dir = temp("cfg");
+        std::fs::create_dir_all(dir.join("config")).unwrap();
+        std::fs::write(
+            dir.join("config").join("config.toml"),
+            "[conversion]\nascii_symbol = \"half\"\n[width]\n# x\nascii_symbol = \"half\" # c\n",
+        )
+        .unwrap();
+        assert_eq!(
+            read_widths(&dir),
+            Widths {
+                half_digits: true,
+                half_marks: true
+            }
+        );
+        assert_eq!(read_widths(&dir.join("none")), SHIPPED);
+        let _ = std::fs::remove_dir_all(&dir);
         assert_eq!(register(&file, "てすと", "テスト語"), Ok(true));
         assert_eq!(
             std::fs::read_to_string(&file).unwrap(),
@@ -968,6 +1103,25 @@ mod tests {
             .map(|e| e.unwrap().file_name())
             .collect();
         assert_eq!(names, ["registered.txt"]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_file_that_cannot_be_read_is_never_written_over() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let dir = temp("lock");
+        let file = registered_file(&dir);
+        register(&file, "かるかん", "karukan").unwrap();
+        let before = std::fs::read(&file).unwrap();
+        // held open with no sharing: reading it fails
+        let lock = std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0)
+            .open(&file)
+            .unwrap();
+        assert!(register(&file, "てすと", "テスト語").is_err());
+        drop(lock);
+        assert_eq!(std::fs::read(&file).unwrap(), before);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
